@@ -1,0 +1,178 @@
+"""
+AI Media Finder - 어렴풋한 기억으로 책/영화/드라마/애니메이션을 찾아주는 FastAPI 백엔드
+
+실행 방법:
+    pip install -r requirements.txt
+    PowerShell: $env:GEMINI_API_KEY="AIza..."   (https://aistudio.google.com/apikey 에서 무료 발급)
+    python -m uvicorn main:app --reload
+"""
+
+import logging
+import os
+from typing import List, Literal, Optional
+
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from google import genai
+from google.genai import errors, types
+from pydantic import BaseModel, Field, ValidationError
+
+# gemini-2.5/2.0/1.5-flash는 신규 사용자에게 제공되지 않아(404) 현재 사용 가능한 모델을 사용
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
+# 기본 모델이 과부하(503 등)일 때 순서대로 재시도할 모델 (쉼표 구분 환경변수로 변경 가능)
+GEMINI_FALLBACK_MODELS = [
+    m.strip()
+    # 무료 등급은 모델별 일일 한도(20회)가 따로라서 여러 모델을 순서대로 시도한다
+    for m in os.getenv(
+        "GEMINI_FALLBACK_MODELS",
+        "gemini-3.5-flash,gemini-3.5-flash-lite,gemini-3.1-flash-lite,gemini-flash-lite-latest",
+    ).split(",")
+    if m.strip()
+]
+# 일시적 오류로 보고 다음 모델로 넘어갈 HTTP 상태 코드
+# 429: 모델별 무료 할당량 초과, 500: 내부 오류, 503: 과부하(UNAVAILABLE), 504: 시간 초과
+RETRYABLE_STATUS_CODES = {429, 500, 503, 504}
+
+logger = logging.getLogger("uvicorn.error")
+
+MediaType = Literal["book", "movie", "drama", "animation"]
+
+app = FastAPI(
+    title="AI Media Finder",
+    description="어렴풋한 설명으로 책, 영화, 드라마, 애니메이션을 찾아주는 API",
+    version="1.0.0",
+)
+
+# CORS 설정: ALLOWED_ORIGINS 환경변수(쉼표 구분)로 허용 도메인을 지정할 수 있다.
+# 지정하지 않으면 개발 편의를 위해 모든 출처를 허용한다.
+allowed_origins = [
+    origin.strip()
+    for origin in os.getenv("ALLOWED_ORIGINS", "*").split(",")
+    if origin.strip()
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=allowed_origins,
+    # 와일드카드(*) 출처와 credentials는 함께 쓸 수 없으므로 명시적 출처일 때만 허용
+    allow_credentials="*" not in allowed_origins,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+_client: Optional[genai.Client] = None
+
+
+def get_client() -> genai.Client:
+    """API 키가 없어도 서버가 기동되도록 첫 요청 시점에 클라이언트를 만든다."""
+    global _client
+    if _client is None:
+        _client = genai.Client()  # GEMINI_API_KEY 또는 GOOGLE_API_KEY 환경변수를 사용
+    return _client
+
+
+class SearchRequest(BaseModel):
+    query: str = Field(
+        ...,
+        min_length=2,
+        max_length=2000,
+        description="찾고 싶은 작품에 대한 어렴풋한 설명",
+        examples=["주인공이 매일 같은 날을 반복하는 영화인데 마지막에 사랑을 깨닫는 내용"],
+    )
+
+
+class Candidate(BaseModel):
+    title: str
+    media_type: MediaType
+    release_year: Optional[int] = None
+    reason: str = Field(..., description="이 후보가 설명과 맞을 수 있는 이유")
+
+
+class SearchResponse(BaseModel):
+    title: str
+    media_type: MediaType
+    release_year: Optional[int] = None
+    ott_platforms: List[str] = Field(default_factory=list)
+    one_liner_summary: str
+    match_reason: str
+    candidates: List[Candidate] = Field(default_factory=list)
+
+
+SYSTEM_PROMPT = """너는 책, 영화, 드라마, 애니메이션에 정통한 미디어 큐레이터다.
+사용자가 어렴풋하게 기억하는 줄거리, 장면, 인물, 분위기, 시기 등의 단서를 분석해서
+가장 가능성이 높은 작품 하나와 다른 후보 작품들을 찾아라.
+
+반드시 아래 형식의 JSON 객체 하나만 응답하라. 다른 텍스트는 절대 포함하지 마라.
+{
+  "title": "가장 유력한 작품의 제목 (한국어 제목이 있으면 한국어 제목, 괄호 안에 원제)",
+  "media_type": "book | movie | drama | animation 중 하나",
+  "release_year": 출시/출간 연도 (정수, 모르면 null),
+  "ott_platforms": ["한국에서 시청 가능한 것으로 알려진 OTT 플랫폼 (예: Netflix, Disney+, TVING, Wavve, Coupang Play, Watcha, Apple TV+, Prime Video). 책이거나 모르면 빈 배열"],
+  "one_liner_summary": "작품을 스포일러 없이 재치 있고 위트 넘치는 한 문장으로 요약 (예: 영화 홍보 문구처럼)",
+  "match_reason": "사용자의 설명 중 어떤 단서가 이 작품과 일치하는지 구체적으로 설명",
+  "candidates": [
+    {
+      "title": "다른 후보 작품 제목",
+      "media_type": "book | movie | drama | animation 중 하나",
+      "release_year": 정수 또는 null,
+      "reason": "이 후보도 해당될 수 있는 이유"
+    }
+  ]
+}
+
+규칙:
+- candidates에는 최유력 작품을 제외한 후보를 2~4개 넣어라.
+- 실제로 존재하는 작품만 제시하고, 확실하지 않은 정보는 지어내지 말고 null 또는 빈 배열로 둬라.
+- OTT 정보는 시기에 따라 바뀔 수 있으므로 확실한 것만 넣어라.
+- 모든 설명 문장은 한국어로 작성하라."""
+
+
+@app.get("/")
+async def health_check():
+    return {"status": "ok", "service": "AI Media Finder"}
+
+
+@app.post("/api/search", response_model=SearchResponse)
+async def search_media(request: SearchRequest) -> SearchResponse:
+    if not (os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")):
+        raise HTTPException(status_code=500, detail="GEMINI_API_KEY 환경변수가 설정되지 않았습니다.")
+
+    config = types.GenerateContentConfig(
+        system_instruction=SYSTEM_PROMPT,
+        response_mime_type="application/json",
+        response_schema=SearchResponse,  # 스키마를 강제해 항상 같은 JSON 구조로 응답받는다
+        temperature=0.3,
+    )
+    models = [GEMINI_MODEL] + [m for m in GEMINI_FALLBACK_MODELS if m != GEMINI_MODEL]
+    last_error: Optional[errors.APIError] = None
+
+    for model in models:
+        try:
+            response = await get_client().aio.models.generate_content(
+                model=model, contents=request.query, config=config
+            )
+        except errors.APIError as e:
+            if e.code in RETRYABLE_STATUS_CODES:
+                logger.warning("Gemini 모델 %s 일시 오류(%s), 다음 모델로 재시도합니다.", model, e.code)
+                last_error = e
+                continue
+            raise HTTPException(status_code=502, detail=f"Gemini API 호출 실패: {e}") from e
+
+        try:
+            return SearchResponse.model_validate_json(response.text or "")
+        except ValidationError as e:
+            raise HTTPException(status_code=502, detail="AI 응답을 해석하지 못했습니다. 다시 시도해 주세요.") from e
+
+    # 모든 모델이 일시 오류로 실패한 경우
+    if last_error is not None and last_error.code == 429:
+        raise HTTPException(
+            status_code=429, detail="Gemini 무료 사용량 한도를 초과했습니다. 잠시 후 다시 시도해 주세요."
+        ) from last_error
+    raise HTTPException(
+        status_code=503, detail="Gemini 서버가 일시적으로 혼잡합니다. 잠시 후 다시 시도해 주세요."
+    ) from last_error
+
+if __name__ == "__main__":
+    import uvicorn
+
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)

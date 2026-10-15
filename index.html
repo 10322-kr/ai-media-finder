@@ -1,0 +1,1279 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI Media Finder</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Black+Han+Sans&family=Playfair+Display:wght@800&family=Courier+Prime:wght@400;700&family=Gowun+Dodum&family=Nanum+Myeongjo:wght@700;800&display=swap" rel="stylesheet" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js" defer></script>
+
+  <style>
+    /* ===================== 디자인 토큰 ===================== */
+    :root {
+      --bg: #170a0b;
+      --bg-light: #2a211c;
+      --curtain-dark: #22080b;
+      --curtain: #4a141a;
+      --curtain-light: #64212a;
+      --bulb: #ffd25a;
+      --paper: #f4ead5;
+      --paper-dark: #e8dabb;
+      --ink: #2b2118;
+      --ink-soft: #6b5a48;
+      --red: #c8442f;
+      --teal: #2f6f6a;
+      --mustard: #e3a72f;
+      --plum: #6b3e5e;
+      --cream-line: rgba(43, 33, 24, 0.25);
+
+      --font-display: "Black Han Sans", sans-serif;
+      --font-serif: "Nanum Myeongjo", serif;
+      --font-body: "Gowun Dodum", sans-serif;
+      --font-mono: "Courier Prime", monospace;
+
+      /* 종이 섬유 질감 (SVG 노이즈) */
+      --paper-grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='p'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .42 0 0 0 0 .32 0 0 0 0 .2 .45 0 0 0 -.12'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23p)'/%3E%3C/svg%3E");
+      /* 도장 잉크 번짐용 마스크 */
+      --stamp-grunge: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='s'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.75' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 -3 0 0 0 3'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23s)'/%3E%3C/svg%3E");
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      min-height: 100vh;
+      background-color: var(--bg);
+      color: var(--paper);
+      font-family: var(--font-body);
+      padding: 40px 16px 64px;
+    }
+    /* 극장 내부: 양옆에만 붉은 커튼, 가운데는 어두운 무대 + 위쪽 은은한 조명 */
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      z-index: -2;
+      pointer-events: none;
+      background:
+        radial-gradient(ellipse 50% 32% at 50% 0%, rgba(255, 190, 110, 0.2), rgba(255, 190, 110, 0) 70%),
+        linear-gradient(180deg, rgba(0, 0, 0, 0.5) 0%, rgba(0, 0, 0, 0) 18%, rgba(0, 0, 0, 0) 75%, rgba(0, 0, 0, 0.65) 100%),
+        linear-gradient(90deg,
+          rgba(20, 9, 9, 0) 0%, rgba(20, 9, 9, 0.2) 8%, rgba(20, 9, 9, 0.97) 18%,
+          rgba(20, 9, 9, 0.97) 82%, rgba(20, 9, 9, 0.2) 92%, rgba(20, 9, 9, 0) 100%),
+        repeating-linear-gradient(90deg,
+          var(--curtain-dark) 0, var(--curtain) 12px, var(--curtain-light) 19px,
+          var(--curtain) 27px, var(--curtain-dark) 42px);
+    }
+    /* 벨벳 같은 미세한 입자감 */
+    body::after {
+      content: "";
+      position: fixed;
+      inset: 0;
+      z-index: -1;
+      pointer-events: none;
+      background-image: var(--paper-grain);
+      opacity: 0.35;
+      mix-blend-mode: overlay;
+    }
+
+    .container { max-width: 880px; margin: 0 auto; }
+
+    /* ===================== 헤더 (극장 간판) ===================== */
+    .marquee {
+      text-align: center;
+      margin-bottom: 36px;
+    }
+    /* 간판 전구: 따뜻하게 빛나며 살짝 깜빡이는 작은 전구들 */
+    .marquee__bulbs {
+      display: flex;
+      justify-content: center;
+      gap: 14px;
+      margin-bottom: 22px;
+    }
+    .marquee__bulbs span {
+      width: 11px; height: 11px;
+      border-radius: 50%;
+      background: radial-gradient(circle at 40% 35%, #fffdf0 0 25%, var(--bulb) 60%, #e0962a 100%);
+      box-shadow:
+        0 0 4px 1px rgba(255, 230, 150, 0.95),
+        0 0 14px 5px rgba(255, 190, 80, 0.5);
+      animation: twinkle 2.4s ease-in-out infinite;
+    }
+    .marquee__bulbs span:nth-child(odd) { animation-delay: 1.2s; }
+    @keyframes twinkle { 50% { opacity: 0.85; } }
+
+    /* 두툼한 레트로 3D 입체 글자 (금빛 크림 + 갈색 입체면) */
+    .marquee h1 {
+      font-family: var(--font-display);
+      font-size: clamp(2.2rem, 8vw, 4rem);
+      letter-spacing: 0.06em;
+      line-height: 1.15;
+      color: #fbe7b0;
+      word-break: keep-all;
+      text-shadow:
+        1px 1px 0 #dcaa52,
+        2px 2px 0 #c6923d,
+        3px 3px 0 #ab7a2e,
+        4px 4px 0 #8d6122,
+        5px 5px 0 #6e4918,
+        6px 6px 0 #3f290c,
+        8px 11px 16px rgba(0, 0, 0, 0.7),
+        0 0 28px rgba(255, 200, 110, 0.45);
+    }
+    .marquee p {
+      margin-top: 14px;
+      font-family: var(--font-mono);
+      font-weight: 700;
+      letter-spacing: 0.3em;
+      font-size: 0.85rem;
+      color: #f0d9a8;
+      text-transform: uppercase;
+    }
+
+    /* ===================== 검색 티켓 ===================== */
+    /* 빛바랜 아날로그 티켓: 찢긴 듯한 종이 가장자리 + 바닥에서 떠 있는 그림자.
+       절취선 홈은 마스크로 뚫어서 배경이 그대로 비쳐 보이게 한다. */
+    .search-ticket {
+      /* 절취선 반원 홈 위치 (모바일에서는 좌우로 이동) */
+      --notch-1: calc(100% - 190px) 0;
+      --notch-2: calc(100% - 190px) 100%;
+      position: relative;
+      isolation: isolate;
+      display: flex;
+      color: var(--ink);
+      filter: drop-shadow(0 16px 22px rgba(0, 0, 0, 0.65));
+    }
+    .search-ticket::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      z-index: -1;
+      border-radius: 6px;
+      background:
+        var(--paper-grain),
+        radial-gradient(circle at 86% 80%, rgba(150, 100, 45, 0.16), rgba(150, 100, 45, 0) 30%),
+        radial-gradient(circle at 12% 18%, rgba(150, 100, 45, 0.12), rgba(150, 100, 45, 0) 26%),
+        radial-gradient(circle at 55% 95%, rgba(150, 100, 45, 0.1), rgba(150, 100, 45, 0) 22%),
+        radial-gradient(ellipse at 50% 50%, rgba(110, 70, 30, 0) 55%, rgba(110, 70, 30, 0.3) 100%),
+        linear-gradient(180deg, #f4e8cc 0%, #e8d6af 100%);
+      box-shadow:
+        inset 0 0 22px rgba(110, 70, 30, 0.35),
+        inset 0 0 3px rgba(80, 50, 20, 0.55);
+      /* 가장자리를 불규칙하게 흔들어 찢긴 종이처럼 보이게 함 (#torn-edge는 body의 SVG 필터) */
+      filter: url(#torn-edge);
+      -webkit-mask:
+        radial-gradient(circle 16px at var(--notch-1), transparent 15.5px, #000 16px),
+        radial-gradient(circle 16px at var(--notch-2), transparent 15.5px, #000 16px);
+      -webkit-mask-composite: source-in;
+      mask:
+        radial-gradient(circle 16px at var(--notch-1), transparent 15.5px, #000 16px),
+        radial-gradient(circle 16px at var(--notch-2), transparent 15.5px, #000 16px);
+      mask-composite: intersect;
+    }
+
+    .search-ticket__main {
+      flex: 1;
+      padding: 26px 30px 28px;
+      border-right: 2px dashed rgba(90, 60, 30, 0.4);
+      min-width: 0;
+    }
+
+    /* 붉은 고무 도장이 찍힌 LOST & FOUND 라벨 */
+    .ticket-stamp {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      margin: 0 0 8px -6px;
+      padding: 3px 10px 3px 8px;
+      border: 2.5px solid var(--red);
+      border-radius: 3px;
+      color: #b8321f;
+      font-family: "Playfair Display", var(--font-serif);
+      font-weight: 800;
+      font-size: 1.15rem;
+      letter-spacing: 0.02em;
+      line-height: 1.2;
+      opacity: 0.95;
+      mix-blend-mode: multiply;
+      transform: rotate(-4deg);
+      -webkit-mask: var(--stamp-grunge) 0 0 / 140px 140px;
+      mask: var(--stamp-grunge) 0 0 / 140px 140px;
+      animation: stamp 0.45s cubic-bezier(0.2, 1.6, 0.4, 1) 0.3s both;
+    }
+    .ticket-stamp svg { flex-shrink: 0; }
+    @keyframes stamp {
+      from { opacity: 0; transform: rotate(-12deg) scale(2.2); }
+      to   { opacity: 0.95; transform: rotate(-4deg) scale(1); }
+    }
+    .search-ticket__main h2 {
+      font-family: var(--font-body);
+      font-weight: 400;
+      font-size: 1.45rem;
+      margin: 2px 0 14px;
+    }
+
+    /* 손으로 그린 듯한 테두리의 메모 입력칸 */
+    .memo {
+      position: relative;
+    }
+    .memo::before,
+    .memo::after {
+      content: "";
+      position: absolute;
+      pointer-events: none;
+      border-radius: 4px;
+    }
+    .memo::after {
+      inset: 0;
+      border: 2.5px solid #2b2118;
+      filter: url(#sketch);
+    }
+    .memo::before {
+      inset: 2px -1px -2px 1px;
+      border: 1.5px solid rgba(43, 33, 24, 0.45);
+      filter: url(#sketch);
+      transform: rotate(0.25deg);
+    }
+    .memo:focus-within::after { border-color: var(--red); }
+    .search-ticket textarea {
+      display: block;
+      width: 100%;
+      min-height: 120px;
+      resize: vertical;
+      border: none;
+      border-radius: 4px;
+      background: linear-gradient(180deg, #fffcf3 0%, #fbf4e2 100%);
+      padding: 14px 16px;
+      font-family: var(--font-body);
+      font-size: 1.05rem;
+      line-height: 1.6;
+      color: var(--ink);
+    }
+    .search-ticket textarea:focus { outline: none; }
+
+    /* 추천 태그: 가장자리가 톱니 모양인 우표 같은 보조 티켓 (그림자는 컨테이너 필터로 마스크 밖에 그림) */
+    .hint-chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px 12px;
+      margin-top: 16px;
+      filter: drop-shadow(0 2px 2px rgba(60, 40, 20, 0.35));
+    }
+    .hint-chips button {
+      --chip-bg: linear-gradient(180deg, #ecd9ae 0%, #dcc290 100%);
+      border: none;
+      background: var(--chip-bg);
+      color: var(--ink);
+      padding: 8px 12px;
+      font-family: var(--font-body);
+      font-size: 0.88rem;
+      cursor: pointer;
+      outline: 1.5px dashed rgba(90, 60, 30, 0.55);
+      outline-offset: -6px;
+      -webkit-mask:
+        linear-gradient(#000 0 0) 4px 4px / calc(100% - 8px) calc(100% - 8px) no-repeat,
+        radial-gradient(circle closest-side, #000 96%, #0000) 0 0 / 8px 8px round;
+      mask:
+        linear-gradient(#000 0 0) 4px 4px / calc(100% - 8px) calc(100% - 8px) no-repeat,
+        radial-gradient(circle closest-side, #000 96%, #0000) 0 0 / 8px 8px round;
+      transition: transform 0.15s;
+    }
+    .hint-chips button:hover,
+    .hint-chips button:focus-visible {
+      --chip-bg: linear-gradient(180deg, #f6c454 0%, var(--mustard) 100%);
+      transform: translateY(-2px);
+    }
+
+    .search-ticket__stub {
+      width: 190px;
+      flex-shrink: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+      padding: 22px 20px;
+      text-align: center;
+    }
+    .stub-admit {
+      font-family: var(--font-display);
+      font-size: 1.75rem;
+      line-height: 1.1;
+      letter-spacing: 0.04em;
+      color: var(--ink);
+    }
+    .stub-no {
+      margin-top: 4px;
+      font-family: var(--font-mono);
+      font-size: 0.85rem;
+      color: var(--ink);
+    }
+    /* 발권 버튼 주변에 흩뿌린 작은 별 */
+    .issue-wrap {
+      position: relative;
+      width: 100%;
+    }
+    .issue-wrap::before,
+    .issue-wrap::after {
+      position: absolute;
+      color: #a8402c;
+      line-height: 1;
+      pointer-events: none;
+    }
+    .issue-wrap::before {
+      content: "★\A ★";
+      white-space: pre;
+      top: -22px;
+      right: -12px;
+      font-size: 0.7rem;
+      transform: rotate(15deg);
+    }
+    .issue-wrap::after {
+      content: "★ ★";
+      bottom: -18px;
+      left: -10px;
+      font-size: 0.75rem;
+      transform: rotate(-12deg);
+    }
+    /* 입체 엠보싱 버튼: 위쪽 하이라이트 + 아래쪽 두께, 누르면 쑥 들어감 */
+    .btn-issue {
+      width: 100%;
+      border: 1px solid #5a170e;
+      border-radius: 10px;
+      background: linear-gradient(180deg, #c4503a 0%, #9e3323 50%, #7c2418 100%);
+      color: #fff3dc;
+      font-family: var(--font-display);
+      font-size: 1.2rem;
+      letter-spacing: 0.08em;
+      padding: 13px 8px;
+      cursor: pointer;
+      text-shadow: 0 -1px 0 rgba(60, 10, 0, 0.55), 0 1px 0 rgba(255, 255, 255, 0.2);
+      box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.5),
+        inset 0 -3px 0 rgba(0, 0, 0, 0.18),
+        0 4px 0 #4f140c,
+        0 7px 10px rgba(0, 0, 0, 0.35);
+      transition: transform 0.08s, box-shadow 0.08s;
+    }
+    .btn-issue:hover:not(:disabled) {
+      transform: translateY(-1px);
+      box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.6),
+        inset 0 -3px 0 rgba(0, 0, 0, 0.18),
+        0 5px 0 #4f140c,
+        0 9px 12px rgba(0, 0, 0, 0.35);
+    }
+    .btn-issue:active:not(:disabled) {
+      transform: translateY(4px);
+      box-shadow:
+        inset 0 2px 5px rgba(0, 0, 0, 0.35),
+        inset 0 -1px 0 rgba(255, 255, 255, 0.1),
+        0 0 0 #4f140c,
+        0 2px 3px rgba(0, 0, 0, 0.3);
+    }
+    .btn-issue:focus-visible { outline: 3px solid var(--mustard); outline-offset: 3px; }
+    .btn-issue:disabled { opacity: 0.55; cursor: not-allowed; }
+    .stub-tip { font-size: 0.78rem; line-height: 1.45; color: var(--ink); word-break: keep-all; }
+
+    /* ===================== 로딩 (필름 릴) ===================== */
+    .loading {
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      gap: 18px;
+      margin: 48px 0;
+    }
+    .loading.is-active { display: flex; }
+
+    .reel {
+      position: relative;
+      width: 96px; height: 96px;
+      border-radius: 50%;
+      background: #3b3330;
+      border: 6px solid #8a7d72;
+      animation: spin 1.4s linear infinite;
+    }
+    .reel span {
+      position: absolute;
+      width: 22px; height: 22px;
+      border-radius: 50%;
+      background: var(--bg);
+      top: 50%; left: 50%;
+      margin: -11px 0 0 -11px;
+    }
+    .reel span:nth-child(1) { transform: rotate(0deg)   translateY(-24px); }
+    .reel span:nth-child(2) { transform: rotate(72deg)  translateY(-24px); }
+    .reel span:nth-child(3) { transform: rotate(144deg) translateY(-24px); }
+    .reel span:nth-child(4) { transform: rotate(216deg) translateY(-24px); }
+    .reel span:nth-child(5) { transform: rotate(288deg) translateY(-24px); }
+    .reel::after {
+      content: "";
+      position: absolute;
+      width: 14px; height: 14px;
+      border-radius: 50%;
+      background: #8a7d72;
+      top: 50%; left: 50%;
+      margin: -7px 0 0 -7px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .filmstrip {
+      display: flex;
+      gap: 6px;
+      padding: 6px 8px;
+      background: #111;
+      border-radius: 3px;
+    }
+    .filmstrip i {
+      width: 22px; height: 16px;
+      background: #333;
+      border-radius: 2px;
+      animation: frame 1s infinite;
+    }
+    .filmstrip i:nth-child(2) { animation-delay: 0.15s; }
+    .filmstrip i:nth-child(3) { animation-delay: 0.3s; }
+    .filmstrip i:nth-child(4) { animation-delay: 0.45s; }
+    .filmstrip i:nth-child(5) { animation-delay: 0.6s; }
+    .filmstrip i:nth-child(6) { animation-delay: 0.75s; }
+    @keyframes frame { 30% { background: var(--mustard); } }
+
+    .loading__msg {
+      font-family: var(--font-mono);
+      letter-spacing: 0.1em;
+      color: var(--mustard);
+      font-size: 0.95rem;
+      min-height: 1.4em;
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .reel, .filmstrip i, .marquee__bulbs span, .ticket-stamp { animation: none; }
+    }
+
+    /* ===================== 에러 ===================== */
+    .error-slip {
+      display: none;
+      margin: 32px auto 0;
+      max-width: 520px;
+      background: var(--paper);
+      color: var(--ink);
+      border-left: 8px solid var(--red);
+      border-radius: 6px;
+      padding: 16px 20px;
+      box-shadow: 0 8px 20px rgba(0, 0, 0, 0.4);
+    }
+    .error-slip.is-active { display: block; }
+    .error-slip strong { font-family: var(--font-display); color: var(--red); font-size: 1.1rem; }
+    .error-slip p { margin-top: 6px; font-size: 0.92rem; line-height: 1.5; }
+
+    /* ===================== 결과 포토카드 ===================== */
+    .result { display: none; margin-top: 40px; }
+    .result.is-active { display: block; }
+
+    /* PNG로 저장되는 영역 (배경 포함).
+       html2canvas가 똑같이 그릴 수 있는 것만 쓴다:
+       mask·filter·blend·repeating-gradient·inset 그림자·흐림 없는 그림자는 쓰지 않고,
+       그라데이션의 투명 끝점은 transparent 대신 같은 색의 알파 0으로 적는다. */
+    .export-area {
+      width: fit-content;
+      max-width: 100%;
+      margin: 0 auto;
+      position: relative;
+      z-index: 0; /* 카드 그림자 레이어(z-index:-1)가 이 배경 위에 그려지도록 쌓임 맥락을 만든다 */
+      padding: 34px 30px 38px;
+      border-radius: 6px;
+      background-color: var(--curtain-dark);
+      background-image:
+        linear-gradient(180deg, rgba(255, 196, 120, 0.22) 0%, rgba(255, 196, 120, 0) 35%),
+        linear-gradient(0deg, rgba(6, 2, 3, 0.6) 0%, rgba(6, 2, 3, 0) 35%),
+        linear-gradient(90deg,
+          var(--curtain-dark) 0%, var(--curtain) 30%, var(--curtain-light) 44%,
+          var(--curtain) 63%, var(--curtain-dark) 100%);
+      background-size: auto, auto, 54px 100%;
+    }
+
+    /* 도톰한 종이 티켓: 섬유 질감 + 바랜 얼룩 + 아래쪽 두께 + 떠 있는 그림자 */
+    .photocard {
+      position: relative;
+      width: 400px;
+      max-width: 100%;
+      background-color: var(--paper);
+      background-image:
+        var(--paper-grain),
+        radial-gradient(circle at 90% 92%, rgba(170, 120, 60, 0.18), rgba(170, 120, 60, 0) 32%),
+        radial-gradient(circle at 6% 40%, rgba(170, 120, 60, 0.12), rgba(170, 120, 60, 0) 28%),
+        radial-gradient(ellipse at 30% 10%, rgba(253, 246, 228, 1), rgba(253, 246, 228, 0) 60%),
+        linear-gradient(180deg, #f6ecd6 0%, #e9d7b2 100%);
+      color: var(--ink);
+      border-radius: 14px;
+      border-bottom: 5px solid #a8916a;
+      padding: 14px;
+    }
+    /* 그림자를 카드 뒤 별도 레이어에 둔다.
+       배경 이미지가 있는 요소에 box-shadow를 주면 html2canvas가 그림자를 카드 위에 덮어 그린다. */
+    .photocard::before {
+      content: "";
+      position: absolute;
+      z-index: -1;
+      inset: 0 0 -5px;
+      border-radius: 14px;
+      box-shadow: 0 20px 28px rgba(0, 0, 0, 0.6);
+    }
+    .photocard__frame {
+      border: 2px solid var(--ink);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+
+    /* 포스터 영역: 빛바랜 레트로 선셋 */
+    .poster {
+      position: relative;
+      height: 230px;
+      overflow: hidden;
+      background: linear-gradient(180deg, #e9c46a 0%, #f4a261 100%);
+    }
+    .poster[data-type="movie"]     { background: linear-gradient(180deg, #f1c27d 0%, #c8442f 100%); }
+    .poster[data-type="drama"]     { background: linear-gradient(180deg, #a8d5ba 0%, #2f6f6a 100%); }
+    .poster[data-type="animation"] { background: linear-gradient(180deg, #ffe08a 0%, #e3a72f 100%); }
+    .poster[data-type="book"]      { background: linear-gradient(180deg, #d9b8c4 0%, #6b3e5e 100%); }
+    /* 인쇄 망점 + 가장자리 바램 (포스터 위 덮개) */
+    .poster::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background-image:
+        var(--paper-grain),
+        linear-gradient(180deg, rgba(43, 20, 10, 0.18) 0%, rgba(43, 20, 10, 0) 25%, rgba(43, 20, 10, 0) 75%, rgba(43, 20, 10, 0.25) 100%);
+      pointer-events: none;
+    }
+
+    .poster__sun {
+      position: absolute;
+      left: 50%;
+      bottom: -70px;
+      width: 220px; height: 220px;
+      margin-left: -110px;
+      border-radius: 50%;
+      background: linear-gradient(180deg, #fff3c4 0%, #ffd27a 100%);
+    }
+    /* 태양 위의 가로 줄무늬 */
+    .poster__stripe {
+      position: absolute;
+      left: 0; right: 0;
+      background: rgba(43, 33, 24, 0.22);
+    }
+    .poster__stripe:nth-of-type(2) { bottom: 18px; height: 4px; }
+    .poster__stripe:nth-of-type(3) { bottom: 34px; height: 6px; }
+    .poster__stripe:nth-of-type(4) { bottom: 54px; height: 8px; }
+
+    /* 장르 배지: 극장 간판 명판 */
+    .poster__badge {
+      position: absolute;
+      z-index: 1;
+      top: 12px; left: 12px;
+      background: linear-gradient(180deg, #3a2c22 0%, var(--ink) 100%);
+      color: var(--mustard);
+      font-family: var(--font-mono);
+      font-weight: 700;
+      font-size: 0.72rem;
+      letter-spacing: 0.15em;
+      padding: 4px 10px;
+      border-radius: 3px;
+      border: 1px solid rgba(227, 167, 47, 0.6);
+      border-bottom: 3px solid #120c08;
+    }
+    .poster__year {
+      position: absolute;
+      z-index: 1;
+      top: 8px; right: 12px;
+      font-family: var(--font-display);
+      font-size: 1.6rem;
+      color: #fff3d6;
+      text-shadow: 1px 1px 0 #6b4a2e, 2px 2px 0 #4a3220, 3px 3px 0 var(--ink), 4px 5px 6px rgba(0, 0, 0, 0.35);
+    }
+    /* 제목: 간판 타이틀과 같은 두툼한 3D 입체 글자 */
+    .poster__title {
+      position: absolute;
+      z-index: 1;
+      left: 16px; right: 16px;
+      top: 50%;
+      transform: translateY(-50%);
+      text-align: center;
+      font-family: var(--font-display);
+      font-size: 1.9rem;
+      line-height: 1.2;
+      color: #fff3d6;
+      text-shadow:
+        1px 1px 0 #9a2e1e,
+        2px 2px 0 #7a2316,
+        3px 3px 0 #2b0a06,
+        4px 6px 8px rgba(0, 0, 0, 0.45);
+      word-break: keep-all;
+      overflow-wrap: anywhere;
+    }
+
+    .card-body { padding: 16px 16px 6px; }
+
+    /* OTT 태그: 양옆 홈이 파인 미니 보조 티켓 (투명 원으로 홈을 뚫음) */
+    .ott-tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 14px;
+    }
+    .ott-tag {
+      --tag-fill: #e6d2a8;
+      font-family: var(--font-mono);
+      font-weight: 700;
+      font-size: 0.72rem;
+      padding: 4px 13px;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 0 50%, transparent 4.5px, var(--tag-fill) 5px) left / 51% 100% no-repeat,
+        radial-gradient(circle at 100% 50%, transparent 4.5px, var(--tag-fill) 5px) right / 51% 100% no-repeat;
+    }
+    .ott-tag--empty { --tag-fill: rgba(107, 90, 72, 0.15); color: var(--ink-soft); }
+
+    .one-liner {
+      font-family: var(--font-serif);
+      font-weight: 800;
+      font-size: 1.12rem;
+      line-height: 1.5;
+      padding: 0 4px 14px;
+      border-bottom: 1px solid var(--cream-line);
+      word-break: keep-all;
+    }
+    .one-liner::before { content: "“"; color: var(--red); }
+    .one-liner::after  { content: "”"; color: var(--red); }
+
+    .section-label {
+      display: block;
+      margin: 12px 0 4px;
+      font-family: var(--font-mono);
+      font-weight: 700;
+      font-size: 0.7rem;
+      letter-spacing: 0.2em;
+      color: var(--red);
+    }
+    .section-label::before { content: "★ "; }
+    .match-reason {
+      font-size: 0.9rem;
+      line-height: 1.6;
+      color: var(--ink);
+    }
+
+    /* 절취선 + 양끝 검표 펀치 구멍 */
+    .tear {
+      position: relative;
+      margin: 18px 0 0;
+      height: 0;
+      border-top: 2px dashed rgba(43, 33, 24, 0.35);
+    }
+    .tear::before,
+    .tear::after {
+      content: "";
+      position: absolute;
+      top: -9px;
+      width: 16px; height: 16px;
+      border-radius: 50%;
+      background: radial-gradient(circle at 50% 30%, #000 0%, #0e0506 45%, #3a1a14 100%);
+    }
+    .tear::before { left: 8px; }
+    .tear::after  { right: 8px; }
+
+    /* 스텁: 대체 후보 */
+    .stub { position: relative; padding: 6px 16px 0; }
+    .candidates { list-style: none; }
+    .candidate {
+      display: flex;
+      gap: 10px;
+      padding: 9px 0;
+      border-bottom: 1px dotted var(--cream-line);
+    }
+    .candidate:last-child { border-bottom: none; }
+    /* 후보 번호: 붉은 원형 도장 */
+    .candidate__no {
+      flex-shrink: 0;
+      width: 28px; height: 28px;
+      border-radius: 50%;
+      border: 4px double var(--red);
+      color: var(--red);
+      font-family: var(--font-mono);
+      font-weight: 700;
+      font-size: 0.75rem;
+      text-align: center;
+      line-height: 20px;
+      opacity: 0.85;
+      transform: rotate(-10deg);
+    }
+    .candidate__head {
+      font-family: var(--font-serif);
+      font-weight: 800;
+      font-size: 0.95rem;
+    }
+    .candidate__meta {
+      font-family: var(--font-mono);
+      font-size: 0.7rem;
+      color: var(--ink-soft);
+      margin-left: 4px;
+      font-weight: 400;
+    }
+    .candidate__reason {
+      font-size: 0.8rem;
+      line-height: 1.5;
+      color: var(--ink-soft);
+      margin-top: 2px;
+    }
+    .candidates-empty { font-size: 0.82rem; color: var(--ink-soft); padding: 6px 0; }
+
+    .card-footer {
+      position: relative;
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      gap: 12px;
+      padding: 14px 4px 2px;
+    }
+    .card-footer__info {
+      font-family: var(--font-mono);
+      font-size: 0.68rem;
+      line-height: 1.5;
+      color: var(--ink-soft);
+    }
+    .card-footer__info b { color: var(--ink); }
+    /* 검표 완료 도장 */
+    .admit-stamp {
+      position: absolute;
+      left: 50%;
+      bottom: 2px;
+      margin-left: -46px;
+      width: 92px;
+      padding: 4px 0 3px;
+      border: 5px double var(--red);
+      border-radius: 5px;
+      color: var(--red);
+      text-align: center;
+      font-family: var(--font-display);
+      font-size: 0.85rem;
+      letter-spacing: 0.1em;
+      line-height: 1.1;
+      opacity: 0.78;
+      transform: rotate(-9deg);
+      pointer-events: none;
+    }
+    .admit-stamp small {
+      display: block;
+      font-family: var(--font-mono);
+      font-weight: 700;
+      font-size: 0.5rem;
+      letter-spacing: 0.25em;
+    }
+    .barcode {
+      display: flex;
+      align-items: stretch;
+      height: 34px;
+      gap: 2px;
+      padding: 3px 4px;
+      background: rgba(255, 250, 235, 0.6);
+      border-radius: 2px;
+    }
+    .barcode i { display: block; background: var(--ink); }
+
+    /* 결과 하단 버튼: 발권 버튼과 같은 입체 엠보싱 */
+    .result-actions {
+      display: flex;
+      justify-content: center;
+      flex-wrap: wrap;
+      gap: 14px;
+      margin-top: 24px;
+    }
+    .btn {
+      --btn-edge: #8f6512;
+      border: 1px solid var(--btn-edge);
+      border-radius: 8px;
+      padding: 11px 22px;
+      font-family: var(--font-display);
+      font-size: 1rem;
+      letter-spacing: 0.05em;
+      cursor: pointer;
+      box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.5),
+        inset 0 -3px 0 rgba(0, 0, 0, 0.15),
+        0 4px 0 var(--btn-edge),
+        0 7px 10px rgba(0, 0, 0, 0.4);
+      transition: transform 0.08s, box-shadow 0.08s;
+    }
+    .btn:hover:not(:disabled) {
+      transform: translateY(-1px);
+      box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.6),
+        inset 0 -3px 0 rgba(0, 0, 0, 0.15),
+        0 5px 0 var(--btn-edge),
+        0 9px 12px rgba(0, 0, 0, 0.4);
+    }
+    .btn:active:not(:disabled) {
+      transform: translateY(4px);
+      box-shadow:
+        inset 0 2px 5px rgba(0, 0, 0, 0.3),
+        inset 0 -1px 0 rgba(255, 255, 255, 0.1),
+        0 0 0 var(--btn-edge),
+        0 2px 3px rgba(0, 0, 0, 0.3);
+    }
+    .btn:focus-visible { outline: 3px solid var(--paper); outline-offset: 3px; }
+    .btn:disabled { opacity: 0.55; cursor: not-allowed; }
+    .btn--primary {
+      background: linear-gradient(180deg, #f6c454 0%, var(--mustard) 50%, #c48a1e 100%);
+      color: var(--ink);
+      text-shadow: 0 1px 0 rgba(255, 255, 255, 0.4);
+    }
+    .btn--ghost {
+      --btn-edge: #9c8a6c;
+      background: linear-gradient(180deg, #fffaf0 0%, var(--paper) 50%, var(--paper-dark) 100%);
+      color: var(--ink);
+      text-shadow: 0 1px 0 rgba(255, 255, 255, 0.6);
+    }
+
+    .footnote {
+      margin-top: 40px;
+      text-align: center;
+      font-size: 0.75rem;
+      color: #8a7d72;
+      line-height: 1.6;
+    }
+
+    /* ===================== 모바일 ===================== */
+    @media (max-width: 560px) {
+      body { padding: 24px 16px 48px; }
+      .search-ticket { flex-direction: column; }
+      .search-ticket__main { padding: 22px 18px 24px; border-right: none; border-bottom: 2px dashed rgba(90, 60, 30, 0.4); }
+      /* 스텁 높이를 고정해 절취선 홈 위치(아래에서 120px)와 맞춘다 */
+      .search-ticket {
+        --notch-1: 0 calc(100% - 120px);
+        --notch-2: 100% calc(100% - 120px);
+      }
+      .search-ticket__stub { width: 100%; height: 120px; flex-direction: row; justify-content: space-between; padding: 14px 24px; }
+      .stub-admit { font-size: 1.4rem; text-align: left; }
+      .issue-wrap { width: auto; }
+      .search-ticket__stub .btn-issue { width: auto; padding: 12px 24px; }
+      .stub-tip { display: none; }
+      .export-area { padding: 22px 14px 26px; }
+      .poster { height: 200px; }
+      .poster__title { font-size: 1.6rem; }
+    }
+    /* 좁은 화면에서는 티켓 정보·바코드와 겹치지 않도록 도장을 숨긴다 */
+    @media (max-width: 420px) {
+      .admit-stamp { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <!-- 종이 가장자리를 찢긴 듯 / 손그림처럼 흔드는 SVG 필터 -->
+  <svg width="0" height="0" style="position: absolute" aria-hidden="true" focusable="false">
+    <filter id="torn-edge" x="-2%" y="-5%" width="104%" height="110%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.05" numOctaves="3" seed="7" result="noise" />
+      <feDisplacementMap in="SourceGraphic" in2="noise" scale="7" xChannelSelector="R" yChannelSelector="G" />
+    </filter>
+    <filter id="sketch" x="-2%" y="-5%" width="104%" height="110%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.035" numOctaves="2" seed="3" result="noise" />
+      <feDisplacementMap in="SourceGraphic" in2="noise" scale="3.5" xChannelSelector="R" yChannelSelector="G" />
+    </filter>
+  </svg>
+
+  <div class="container">
+
+    <!-- 헤더 -->
+    <header class="marquee">
+      <div class="marquee__bulbs" aria-hidden="true">
+        <span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span>
+      </div>
+      <h1>기억 속 그 작품 매표소</h1>
+      <p>★ AI Media Finder · Now Showing ★</p>
+    </header>
+
+    <!-- 검색 티켓 -->
+    <form class="search-ticket" id="searchForm" autocomplete="off">
+      <div class="search-ticket__main">
+        <span class="ticket-stamp">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M11 4H5a1 1 0 0 0-1 1v14a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-6" />
+            <path d="M18.5 2.5a2.1 2.1 0 0 1 3 3L12 15l-4 1 1-4z" />
+          </svg>
+          LOST &amp; FOUND
+        </span>
+        <h2>어렴풋한 기억을 적어주세요</h2>
+        <div class="memo">
+          <textarea
+            id="queryInput"
+            placeholder="예) 주인공이 매일 같은 하루를 반복하는데, 결국 사랑을 깨닫는 영화였던 것 같아요"
+            maxlength="2000"
+            aria-label="찾고 싶은 작품에 대한 설명"
+          ></textarea>
+        </div>
+        <div class="hint-chips" id="hintChips">
+          <button type="button" data-q="소년이 고양이 버스를 타고 숲의 정령을 만나는 애니메이션">고양이 버스 애니</button>
+          <button type="button" data-q="빚진 사람들이 거액의 상금을 걸고 어린 시절 놀이로 목숨을 건 게임을 하는 드라마">목숨 건 어린이 게임</button>
+          <button type="button" data-q="화성에 혼자 남겨진 우주비행사가 감자를 키우며 버티는 이야기">화성에서 감자 농사</button>
+          <button type="button" data-q="무인도에 표류한 소년이 호랑이와 구명보트에서 함께 지내는 소설">호랑이와 구명보트</button>
+        </div>
+      </div>
+      <div class="search-ticket__stub">
+        <div>
+          <div class="stub-admit">ADMIT<br />ONE</div>
+          <div class="stub-no" id="stubNo">No. 000000</div>
+        </div>
+        <div class="issue-wrap">
+          <button type="submit" class="btn-issue" id="submitBtn">발권하기</button>
+        </div>
+        <div class="stub-tip">Enter 발권 · Shift+Enter 줄바꿈</div>
+      </div>
+    </form>
+
+    <!-- 로딩 -->
+    <div class="loading" id="loading" role="status" aria-live="polite">
+      <div class="reel" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span></div>
+      <div class="filmstrip" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i></div>
+      <div class="loading__msg" id="loadingMsg">필름 감는 중...</div>
+    </div>
+
+    <!-- 에러 -->
+    <div class="error-slip" id="errorSlip" role="alert">
+      <strong>상영 취소</strong>
+      <p id="errorMsg"></p>
+    </div>
+
+    <!-- 결과 -->
+    <section class="result" id="result" aria-live="polite">
+      <div class="export-area" id="exportArea">
+        <article class="photocard">
+          <div class="photocard__frame">
+            <div class="poster" id="poster">
+              <div class="poster__sun"></div>
+              <div class="poster__stripe"></div>
+              <div class="poster__stripe"></div>
+              <div class="poster__stripe"></div>
+              <span class="poster__badge" id="typeBadge">MOVIE · 영화</span>
+              <span class="poster__year" id="yearText">1993</span>
+              <h3 class="poster__title" id="titleText">제목</h3>
+            </div>
+
+            <div class="card-body">
+              <div class="ott-tags" id="ottTags"></div>
+              <p class="one-liner" id="oneLiner"></p>
+              <span class="section-label">WHY THIS ONE · 매칭 이유</span>
+              <p class="match-reason" id="matchReason"></p>
+            </div>
+
+            <div class="tear" aria-hidden="true"></div>
+
+            <div class="stub">
+              <span class="section-label">ALSO SHOWING · 대체 후보</span>
+              <ul class="candidates" id="candidates"></ul>
+
+              <div class="card-footer">
+                <div class="card-footer__info">
+                  <div>TICKET <b id="ticketNo">No. 000000</b></div>
+                  <div>DATE <b id="ticketDate">2026.01.01</b></div>
+                  <div>SEAT <b id="ticketSeat">A-7</b></div>
+                </div>
+                <div class="admit-stamp" aria-hidden="true">ADMITTED<small>검표 완료</small></div>
+                <div class="barcode" id="barcode" aria-hidden="true"></div>
+              </div>
+            </div>
+          </div>
+        </article>
+      </div>
+
+      <div class="result-actions">
+        <button type="button" class="btn btn--primary" id="saveBtn">PNG로 저장하기</button>
+        <button type="button" class="btn btn--ghost" id="againBtn">다른 작품 찾기</button>
+      </div>
+    </section>
+
+    <p class="footnote">
+      OTT 정보는 AI가 알고 있는 내용 기준이라 실제와 다를 수 있어요.<br />
+      백엔드 주소 변경: <code>index.html?api=http://내서버:8000</code>
+    </p>
+  </div>
+
+  <script>
+    // ===================== 설정 =====================
+    const API_BASE = new URLSearchParams(location.search).get("api") || "http://localhost:8000";
+    const REQUEST_TIMEOUT_MS = 60000;
+
+    const MEDIA_LABELS = {
+      movie: "MOVIE · 영화",
+      drama: "DRAMA · 드라마",
+      animation: "ANIMATION · 애니",
+      book: "BOOK · 도서",
+    };
+    const MEDIA_SHORT = { movie: "영화", drama: "드라마", animation: "애니", book: "도서" };
+
+    const LOADING_MESSAGES = [
+      "필름 감는 중...",
+      "영사기 예열 중...",
+      "기억의 조각을 맞추는 중...",
+      "팝콘 튀기는 중...",
+      "비디오 대여점 뒤지는 중...",
+      "곧 상영합니다...",
+    ];
+
+    // ===================== DOM =====================
+    const $ = (id) => document.getElementById(id);
+    const form = $("searchForm");
+    const input = $("queryInput");
+    const submitBtn = $("submitBtn");
+    const loading = $("loading");
+    const loadingMsg = $("loadingMsg");
+    const errorSlip = $("errorSlip");
+    const errorMsg = $("errorMsg");
+    const result = $("result");
+    const saveBtn = $("saveBtn");
+
+    let loadingTimer = null;
+    let lastTitle = "";
+
+    // ===================== 유틸 =====================
+    function el(tag, className, text) {
+      const node = document.createElement(tag);
+      if (className) node.className = className;
+      if (text != null) node.textContent = text; // textContent로 XSS 방지
+      return node;
+    }
+
+    function hashString(str) {
+      let h = 2166136261;
+      for (let i = 0; i < str.length; i++) {
+        h ^= str.charCodeAt(i);
+        h = Math.imul(h, 16777619);
+      }
+      return h >>> 0;
+    }
+
+    // 문자열 기반 의사난수 (같은 작품이면 같은 바코드/좌석)
+    function seededRandom(seed) {
+      let s = seed || 1;
+      return () => {
+        s ^= s << 13; s ^= s >>> 17; s ^= s << 5;
+        return ((s >>> 0) % 1000) / 1000;
+      };
+    }
+
+    function randomTicketNo() {
+      return "No. " + String(Math.floor(Math.random() * 1000000)).padStart(6, "0");
+    }
+
+    function todayString() {
+      const d = new Date();
+      return `${d.getFullYear()}.${String(d.getMonth() + 1).padStart(2, "0")}.${String(d.getDate()).padStart(2, "0")}`;
+    }
+
+    // ===================== 상태 전환 =====================
+    function setLoading(on) {
+      submitBtn.disabled = on;
+      input.disabled = on;
+      loading.classList.toggle("is-active", on);
+      clearInterval(loadingTimer);
+      if (on) {
+        let i = 0;
+        loadingMsg.textContent = LOADING_MESSAGES[0];
+        loadingTimer = setInterval(() => {
+          i = (i + 1) % LOADING_MESSAGES.length;
+          loadingMsg.textContent = LOADING_MESSAGES[i];
+        }, 1600);
+      }
+    }
+
+    function showError(message) {
+      errorMsg.textContent = message;
+      errorSlip.classList.add("is-active");
+    }
+
+    function hideError() {
+      errorSlip.classList.remove("is-active");
+    }
+
+    // ===================== API 호출 =====================
+    async function search(query) {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
+      try {
+        const res = await fetch(`${API_BASE}/api/search`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ query }),
+          signal: controller.signal,
+        });
+
+        if (!res.ok) {
+          let detail = `서버 오류 (${res.status})`;
+          try {
+            const body = await res.json();
+            if (typeof body.detail === "string") detail = body.detail;
+            else if (Array.isArray(body.detail)) detail = "검색어를 2자 이상 2000자 이하로 입력해 주세요.";
+          } catch (_) { /* 본문이 JSON이 아니면 기본 메시지 사용 */ }
+          throw new Error(detail);
+        }
+        return await res.json();
+      } catch (err) {
+        if (err.name === "AbortError") throw new Error("응답이 너무 오래 걸려요. 잠시 후 다시 시도해 주세요.");
+        if (err instanceof TypeError) {
+          throw new Error(`백엔드 서버(${API_BASE})에 연결할 수 없어요. uvicorn main:app 이 실행 중인지 확인해 주세요.`);
+        }
+        throw err;
+      } finally {
+        clearTimeout(timeout);
+      }
+    }
+
+    // ===================== 렌더링 =====================
+    function renderBarcode(seedText) {
+      const barcode = $("barcode");
+      barcode.replaceChildren();
+      const rand = seededRandom(hashString(seedText));
+      for (let i = 0; i < 28; i++) {
+        const bar = document.createElement("i");
+        bar.style.width = `${1 + Math.floor(rand() * 3)}px`;
+        barcode.appendChild(bar);
+      }
+    }
+
+    function renderResult(data) {
+      const type = MEDIA_LABELS[data.media_type] ? data.media_type : "movie";
+      lastTitle = data.title || "result";
+
+      $("poster").dataset.type = type;
+      $("typeBadge").textContent = MEDIA_LABELS[type];
+      $("yearText").textContent = data.release_year ?? "????";
+      $("titleText").textContent = data.title;
+      $("oneLiner").textContent = data.one_liner_summary;
+      $("matchReason").textContent = data.match_reason;
+
+      // OTT 태그
+      const ott = $("ottTags");
+      ott.replaceChildren();
+      const platforms = Array.isArray(data.ott_platforms) ? data.ott_platforms : [];
+      if (platforms.length) {
+        platforms.forEach((p) => ott.appendChild(el("span", "ott-tag", `▶ ${p}`)));
+      } else {
+        const msg = type === "book" ? "서점 · 도서관에서 만나요" : "OTT 정보 없음";
+        ott.appendChild(el("span", "ott-tag ott-tag--empty", msg));
+      }
+
+      // 대체 후보
+      const list = $("candidates");
+      list.replaceChildren();
+      const candidates = Array.isArray(data.candidates) ? data.candidates : [];
+      if (!candidates.length) {
+        list.appendChild(el("li", "candidates-empty", "이번 상영작은 단독 개봉입니다."));
+      }
+      candidates.forEach((c, i) => {
+        const li = el("li", "candidate");
+        li.appendChild(el("span", "candidate__no", String(i + 1).padStart(2, "0")));
+        const body = el("div");
+        const head = el("div", "candidate__head", c.title);
+        const meta = [MEDIA_SHORT[c.media_type] || c.media_type, c.release_year].filter(Boolean).join(" · ");
+        if (meta) head.appendChild(el("span", "candidate__meta", meta));
+        body.appendChild(head);
+        if (c.reason) body.appendChild(el("p", "candidate__reason", c.reason));
+        li.appendChild(body);
+        list.appendChild(li);
+      });
+
+      // 티켓 정보
+      const rand = seededRandom(hashString(lastTitle));
+      $("ticketNo").textContent = randomTicketNo();
+      $("ticketDate").textContent = todayString();
+      $("ticketSeat").textContent = `${"ABCDEFGH"[Math.floor(rand() * 8)]}-${1 + Math.floor(rand() * 20)}`;
+      renderBarcode(lastTitle);
+
+      result.classList.add("is-active");
+      result.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+
+    // ===================== PNG 저장 =====================
+    async function saveAsPng() {
+      if (typeof html2canvas !== "function") {
+        showError("이미지 저장 라이브러리를 불러오지 못했어요. 인터넷 연결을 확인해 주세요.");
+        return;
+      }
+      const original = saveBtn.textContent;
+      saveBtn.disabled = true;
+      saveBtn.textContent = "인화 중...";
+      try {
+        await document.fonts.ready;
+        const area = $("exportArea");
+        const canvas = await html2canvas(area, {
+          scale: 2,
+          backgroundColor: getComputedStyle(area).backgroundColor,
+          useCORS: true,
+          logging: false,
+        });
+        const link = document.createElement("a");
+        const safeName = lastTitle.replace(/[\\/:*?"<>|]/g, "").trim().slice(0, 50) || "ticket";
+        link.download = `${safeName}_ticket.png`;
+        link.href = canvas.toDataURL("image/png");
+        link.click();
+      } catch (err) {
+        console.error(err);
+        showError("이미지 저장에 실패했어요. 다시 시도해 주세요.");
+      } finally {
+        saveBtn.disabled = false;
+        saveBtn.textContent = original;
+      }
+    }
+
+    // ===================== 이벤트 =====================
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const query = input.value.trim();
+      hideError();
+
+      if (query.length < 2) {
+        showError("기억나는 내용을 조금만 더 적어주세요. (2자 이상)");
+        input.focus();
+        return;
+      }
+
+      result.classList.remove("is-active");
+      setLoading(true);
+      try {
+        const data = await search(query);
+        renderResult(data);
+      } catch (err) {
+        showError(err.message);
+      } finally {
+        setLoading(false);
+        $("stubNo").textContent = randomTicketNo();
+      }
+    });
+
+    // Enter = 발권, Shift+Enter = 줄바꿈 (한글 조합 중에는 무시)
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
+        e.preventDefault();
+        form.requestSubmit();
+      }
+    });
+
+    $("hintChips").addEventListener("click", (e) => {
+      const btn = e.target.closest("button[data-q]");
+      if (!btn) return;
+      input.value = btn.dataset.q;
+      input.focus();
+    });
+
+    saveBtn.addEventListener("click", saveAsPng);
+
+    $("againBtn").addEventListener("click", () => {
+      result.classList.remove("is-active");
+      hideError();
+      input.value = "";
+      window.scrollTo({ top: 0, behavior: "smooth" });
+      input.focus();
+    });
+
+    $("stubNo").textContent = randomTicketNo();
+  </script>
+</body>
+</html>
