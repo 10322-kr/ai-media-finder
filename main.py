@@ -9,6 +9,7 @@ AI Media Finder - 어렴풋한 기억으로 책/영화/드라마/애니메이션
 
 import logging
 import os
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import List, Literal, Optional
 
@@ -34,6 +35,26 @@ GEMINI_FALLBACK_MODELS = [
 # 일시적 오류로 보고 다음 모델로 넘어갈 HTTP 상태 코드
 # 429: 모델별 무료 할당량 초과, 500: 내부 오류, 503: 과부하(UNAVAILABLE), 504: 시간 초과
 RETRYABLE_STATUS_CODES = {429, 500, 503, 504}
+
+# 서버 전체의 하루 검색 횟수 제한 (모든 사용자 합산, 한국 시간 자정에 초기화).
+# 공개 배포 시 다른 사람이 API 키 한도를 소진하지 않도록 막는다.
+# 메모리에만 저장하므로 서버가 재시작되거나 잠들면(Render 무료 플랜) 0으로 돌아간다.
+DAILY_SEARCH_LIMIT = int(os.getenv("DAILY_SEARCH_LIMIT", "100"))
+KST = timezone(timedelta(hours=9))  # 한국은 서머타임이 없어 고정 오프셋으로 충분하다
+_usage_day: Optional[date] = None
+_usage_count = 0
+
+
+def consume_daily_quota() -> bool:
+    """오늘 사용량을 1 늘리고, 한도를 넘었으면 False를 반환한다."""
+    global _usage_day, _usage_count
+    today = datetime.now(KST).date()
+    if _usage_day != today:
+        _usage_day, _usage_count = today, 0
+    if _usage_count >= DAILY_SEARCH_LIMIT:
+        return False
+    _usage_count += 1
+    return True
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -147,6 +168,12 @@ async def health_check():
 async def search_media(request: SearchRequest) -> SearchResponse:
     if not (os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")):
         raise HTTPException(status_code=500, detail="GEMINI_API_KEY 환경변수가 설정되지 않았습니다.")
+
+    if not consume_daily_quota():
+        raise HTTPException(
+            status_code=429,
+            detail=f"오늘 준비된 티켓({DAILY_SEARCH_LIMIT}장)이 모두 매진됐어요. 내일 다시 찾아 주세요!",
+        )
 
     config = types.GenerateContentConfig(
         system_instruction=SYSTEM_PROMPT,
