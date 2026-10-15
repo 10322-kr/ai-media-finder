@@ -9,10 +9,12 @@ AI Media Finder - 어렴풋한 기억으로 책/영화/드라마/애니메이션
 
 import logging
 import os
+from pathlib import Path
 from typing import List, Literal, Optional
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from google import genai
 from google.genai import errors, types
 from pydantic import BaseModel, Field, ValidationError
@@ -34,6 +36,9 @@ GEMINI_FALLBACK_MODELS = [
 RETRYABLE_STATUS_CODES = {429, 500, 503, 504}
 
 logger = logging.getLogger("uvicorn.error")
+
+# 실행 위치(cwd)와 상관없이 main.py 옆의 index.html을 찾는다
+INDEX_HTML = Path(__file__).resolve().parent / "index.html"
 
 MediaType = Literal["book", "movie", "drama", "animation"]
 
@@ -127,7 +132,13 @@ SYSTEM_PROMPT = """너는 책, 영화, 드라마, 애니메이션에 정통한 �
 - 모든 설명 문장은 한국어로 작성하라."""
 
 
-@app.get("/")
+@app.get("/", include_in_schema=False)
+async def index() -> FileResponse:
+    """프런트엔드(index.html)를 같은 서버에서 제공해 /api/search를 상대 경로로 호출할 수 있게 한다."""
+    return FileResponse(INDEX_HTML, media_type="text/html")
+
+
+@app.get("/health")
 async def health_check():
     return {"status": "ok", "service": "AI Media Finder"}
 
