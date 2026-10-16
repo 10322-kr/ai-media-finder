@@ -45,12 +45,22 @@ _usage_day: Optional[date] = None
 _usage_count = 0
 
 
-def consume_daily_quota() -> bool:
-    """오늘 사용량을 1 늘리고, 한도를 넘었으면 False를 반환한다."""
+def _reset_if_new_day() -> None:
     global _usage_day, _usage_count
     today = datetime.now(KST).date()
     if _usage_day != today:
         _usage_day, _usage_count = today, 0
+
+
+def remaining_daily_quota() -> int:
+    _reset_if_new_day()
+    return max(DAILY_SEARCH_LIMIT - _usage_count, 0)
+
+
+def consume_daily_quota() -> bool:
+    """오늘 사용량을 1 늘리고, 한도를 넘었으면 False를 반환한다."""
+    global _usage_count
+    _reset_if_new_day()
     if _usage_count >= DAILY_SEARCH_LIMIT:
         return False
     _usage_count += 1
@@ -104,6 +114,11 @@ class SearchRequest(BaseModel):
         max_length=2000,
         description="찾고 싶은 작품에 대한 어렴풋한 설명",
         examples=["주인공이 매일 같은 날을 반복하는 영화인데 마지막에 사랑을 깨닫는 내용"],
+    )
+    media_types: List[MediaType] = Field(
+        default_factory=list,
+        max_length=4,
+        description="이 종류의 작품만 찾는다. 비어 있으면 모든 종류",
     )
 
 
@@ -164,6 +179,33 @@ async def health_check():
     return {"status": "ok", "service": "AI Media Finder"}
 
 
+class QuotaResponse(BaseModel):
+    remaining: int
+    limit: int
+
+
+@app.get("/api/quota", response_model=QuotaResponse)
+async def get_quota() -> QuotaResponse:
+    """오늘 남은 검색 횟수 (서버 전체 합산)."""
+    return QuotaResponse(remaining=remaining_daily_quota(), limit=DAILY_SEARCH_LIMIT)
+
+
+MEDIA_TYPE_NAMES = {"book": "책", "movie": "영화", "drama": "드라마", "animation": "애니메이션"}
+
+
+def build_contents(request: SearchRequest) -> str:
+    """필터가 있으면 사용자 설명 뒤에 종류 제한 조건을 붙인다."""
+    types_ = list(dict.fromkeys(request.media_types))  # 중복 제거, 순서 유지
+    if not types_ or len(types_) == len(MEDIA_TYPE_NAMES):
+        return request.query
+    names = ", ".join(f"{MEDIA_TYPE_NAMES[t]}({t})" for t in types_)
+    return (
+        f"{request.query}\n\n"
+        f"[검색 조건] 최유력 작품과 모든 후보는 반드시 다음 종류 중에서만 골라라: {names}. "
+        "media_type도 이 값들 중 하나여야 한다."
+    )
+
+
 @app.post("/api/search", response_model=SearchResponse)
 async def search_media(request: SearchRequest) -> SearchResponse:
     if not (os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")):
@@ -181,13 +223,14 @@ async def search_media(request: SearchRequest) -> SearchResponse:
         response_schema=SearchResponse,  # 스키마를 강제해 항상 같은 JSON 구조로 응답받는다
         temperature=0.3,
     )
+    contents = build_contents(request)
     models = [GEMINI_MODEL] + [m for m in GEMINI_FALLBACK_MODELS if m != GEMINI_MODEL]
     last_error: Optional[errors.APIError] = None
 
     for model in models:
         try:
             response = await get_client().aio.models.generate_content(
-                model=model, contents=request.query, config=config
+                model=model, contents=contents, config=config
             )
         except errors.APIError as e:
             if e.code in RETRYABLE_STATUS_CODES:

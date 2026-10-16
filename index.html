@@ -6,7 +6,7 @@
   <title>AI Media Finder</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Black+Han+Sans&family=Playfair+Display:wght@800&family=Courier+Prime:wght@400;700&family=Gowun+Dodum&family=Nanum+Myeongjo:wght@700;800&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Black+Han+Sans&family=Do+Hyeon&family=Playfair+Display:wght@800&family=Courier+Prime:wght@400;700&family=Gowun+Dodum&family=Nanum+Myeongjo:wght@700;800&display=swap" rel="stylesheet" />
   <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js" defer></script>
 
   <style>
@@ -105,20 +105,18 @@
 
     /* 두툼한 레트로 3D 입체 글자 (금빛 크림 + 갈색 입체면) */
     .marquee h1 {
-      font-family: var(--font-display);
-      font-size: clamp(2.2rem, 8vw, 4rem);
+      font-family: "Do Hyeon", var(--font-display);
+      font-size: clamp(2.4rem, 8.5vw, 4.4rem);
       letter-spacing: 0.06em;
       line-height: 1.15;
       color: #fbe7b0;
       word-break: keep-all;
+      /* 얇은 금빛 입체면(2px) — 두꺼우면 글자 속 빈 공간을 메워 가독성이 떨어짐 */
       text-shadow:
         1px 1px 0 #dcaa52,
-        2px 2px 0 #c6923d,
-        3px 3px 0 #ab7a2e,
-        4px 4px 0 #8d6122,
-        5px 5px 0 #6e4918,
-        6px 6px 0 #3f290c,
-        8px 11px 16px rgba(0, 0, 0, 0.7),
+        2px 2px 0 #ab7a2e,
+        3px 3px 0 #6e4918,
+        6px 9px 16px rgba(0, 0, 0, 0.7),
         0 0 28px rgba(255, 200, 110, 0.45);
     }
     .marquee p {
@@ -285,6 +283,44 @@
       transform: translateY(-2px);
     }
 
+    /* 작품 종류 필터: 고르면 붉은 잉크 도장이 찍힌 것처럼 채워진다 */
+    .type-filter {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+      margin: 0 0 14px;
+      border: none;
+    }
+    .type-filter legend {
+      float: left;
+      margin-right: 4px;
+      font-family: var(--font-mono);
+      font-weight: 700;
+      font-size: 0.78rem;
+      letter-spacing: 0.12em;
+      color: var(--ink-soft);
+    }
+    .type-filter button {
+      border: 1.5px solid var(--ink);
+      border-radius: 4px;
+      background: transparent;
+      color: var(--ink);
+      padding: 4px 11px;
+      font-family: var(--font-body);
+      font-size: 0.86rem;
+      cursor: pointer;
+      transition: transform 0.1s, background-color 0.15s, color 0.15s;
+    }
+    .type-filter button:hover { transform: translateY(-1px); background: rgba(200, 68, 47, 0.08); }
+    .type-filter button:focus-visible { outline: 2px solid var(--mustard); outline-offset: 2px; }
+    .type-filter button[aria-pressed="true"] {
+      border-color: var(--red);
+      background: var(--red);
+      color: #fff3dc;
+      transform: rotate(-1.5deg);
+    }
+
     .search-ticket__stub {
       width: 190px;
       flex-shrink: 0;
@@ -344,8 +380,8 @@
       background: linear-gradient(180deg, #c4503a 0%, #9e3323 50%, #7c2418 100%);
       color: #fff3dc;
       font-family: var(--font-display);
-      font-size: 1.2rem;
-      letter-spacing: 0.08em;
+      font-size: 1.35rem;
+      letter-spacing: 0.1em;
       padding: 13px 8px;
       cursor: pointer;
       text-shadow: 0 -1px 0 rgba(60, 10, 0, 0.55), 0 1px 0 rgba(255, 255, 255, 0.2);
@@ -374,6 +410,18 @@
     }
     .btn-issue:focus-visible { outline: 3px solid var(--mustard); outline-offset: 3px; }
     .btn-issue:disabled { opacity: 0.55; cursor: not-allowed; }
+    /* 남은 검색 횟수 (오늘 서버 전체 잔여 티켓) */
+    .stub-quota {
+      margin-top: 8px;
+      padding: 3px 8px;
+      border: 1px dashed rgba(43, 33, 24, 0.5);
+      font-family: var(--font-mono);
+      font-size: 0.78rem;
+      color: var(--ink);
+    }
+    .stub-quota strong { font-size: 0.95rem; }
+    .stub-quota.is-low { border-color: var(--red); color: var(--red); }
+    .stub-quota[hidden] { display: none; }
     .stub-tip { font-size: 0.78rem; line-height: 1.45; color: var(--ink); word-break: keep-all; }
 
     /* ===================== 로딩 (필름 릴) ===================== */
@@ -901,6 +949,14 @@
           LOST &amp; FOUND
         </span>
         <h2>어렴풋한 기억을 적어주세요</h2>
+        <fieldset class="type-filter" id="typeFilter">
+          <legend>상영관</legend>
+          <button type="button" data-type="" aria-pressed="true">전체</button>
+          <button type="button" data-type="movie" aria-pressed="false">영화</button>
+          <button type="button" data-type="drama" aria-pressed="false">드라마</button>
+          <button type="button" data-type="animation" aria-pressed="false">애니</button>
+          <button type="button" data-type="book" aria-pressed="false">도서</button>
+        </fieldset>
         <div class="memo">
           <textarea
             id="queryInput"
@@ -920,6 +976,7 @@
         <div>
           <div class="stub-admit">ADMIT<br />ONE</div>
           <div class="stub-no" id="stubNo">No. 000000</div>
+          <div class="stub-quota" id="stubQuota" aria-live="polite" hidden></div>
         </div>
         <div class="issue-wrap">
           <button type="submit" class="btn-issue" id="submitBtn">발권하기</button>
@@ -1032,6 +1089,8 @@
     const errorMsg = $("errorMsg");
     const result = $("result");
     const saveBtn = $("saveBtn");
+    const typeFilter = $("typeFilter");
+    const stubQuota = $("stubQuota");
 
     let loadingTimer = null;
     let lastTitle = "";
@@ -1097,7 +1156,45 @@
     }
 
     // ===================== API 호출 =====================
-    async function search(query) {
+    // 선택된 종류 (전체면 빈 배열)
+    function selectedTypes() {
+      return [...typeFilter.querySelectorAll('button[aria-pressed="true"]')]
+        .map((b) => b.dataset.type)
+        .filter(Boolean);
+    }
+
+    // 하나라도 고르면 '전체' 해제, 모두 해제하면 '전체'로 돌아간다
+    typeFilter.addEventListener("click", (e) => {
+      const btn = e.target.closest("button");
+      if (!btn) return;
+      const allBtn = typeFilter.querySelector('button[data-type=""]');
+      const typeBtns = [...typeFilter.querySelectorAll("button[data-type]:not([data-type=''])")];
+      if (!btn.dataset.type) {
+        typeBtns.forEach((b) => b.setAttribute("aria-pressed", "false"));
+      } else {
+        btn.setAttribute("aria-pressed", String(btn.getAttribute("aria-pressed") !== "true"));
+      }
+      allBtn.setAttribute("aria-pressed", String(!typeBtns.some((b) => b.getAttribute("aria-pressed") === "true")));
+    });
+
+    // ===================== 남은 검색 횟수 =====================
+    function renderQuota(remaining, limit) {
+      stubQuota.replaceChildren("잔여 ", el("strong", null, String(remaining)), ` / ${limit}`);
+      stubQuota.classList.toggle("is-low", remaining <= Math.max(5, limit * 0.1));
+      stubQuota.title = "오늘 남은 검색 횟수 (모든 사용자 합산, 자정에 초기화)";
+      stubQuota.hidden = false;
+    }
+
+    async function refreshQuota() {
+      try {
+        const res = await fetch(`${API_BASE}/api/quota`);
+        if (!res.ok) return;
+        const { remaining, limit } = await res.json();
+        renderQuota(remaining, limit);
+      } catch (_) { /* 서버 연결 실패 시 표시하지 않음 */ }
+    }
+
+    async function search(query, mediaTypes) {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
@@ -1105,7 +1202,7 @@
         const res = await fetch(`${API_BASE}/api/search`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ query }),
+          body: JSON.stringify({ query, media_types: mediaTypes }),
           signal: controller.signal,
         });
 
@@ -1242,13 +1339,14 @@
       result.classList.remove("is-active");
       setLoading(true);
       try {
-        const data = await search(query);
+        const data = await search(query, selectedTypes());
         renderResult(data);
       } catch (err) {
         showError(err.message);
       } finally {
         setLoading(false);
         $("stubNo").textContent = randomTicketNo();
+        refreshQuota();
       }
     });
 
@@ -1278,6 +1376,7 @@
     });
 
     $("stubNo").textContent = randomTicketNo();
+    refreshQuota();
   </script>
 </body>
 </html>
