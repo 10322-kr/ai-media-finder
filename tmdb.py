@@ -37,15 +37,32 @@ def endpoints() -> List[Tuple[str, str, Dict[str, str]]]:
     한국 드라마는 discover로 '최근 2주~앞으로 1주 사이에 에피소드가 방영된 작품'을 따로 받는다.
     """
     today = date.today()
-    korean_tv = {
-        "with_origin_country": "KR",
+    popular = {"sort_by": "popularity.desc"}
+    # 최근 2주~앞으로 1주 사이에 에피소드가 방영된 시리즈 (= 지금 방영 중)
+    airing = {
+        **popular,
         "air_date.gte": (today - timedelta(days=14)).isoformat(),
         "air_date.lte": (today + timedelta(days=7)).isoformat(),
-        "sort_by": "popularity.desc",
     }
+
+    def released_within(days: int) -> Dict[str, str]:
+        """최근 N일 안에 처음 공개된 영화 (극장 없이 OTT로 바로 나온 작품도 포함)."""
+        return {
+            **popular,
+            "primary_release_date.gte": (today - timedelta(days=days)).isoformat(),
+            "primary_release_date.lte": (today + timedelta(days=7)).isoformat(),
+        }
+
+    anime = {"with_genres": str(ANIMATION_GENRE_ID)}
     return [
         ("/movie/now_playing", "movie", {"region": "KR"}),  # 한국 극장 현재 상영작
-        *(("/discover/tv", "tv", {**korean_tv, "page": str(p)}) for p in range(1, KOREAN_TV_PAGES + 1)),
+        *(
+            ("/discover/tv", "tv", {**airing, "with_origin_country": "KR", "page": str(p)})
+            for p in range(1, KOREAN_TV_PAGES + 1)
+        ),
+        ("/discover/movie", "movie", {**released_within(120), "with_origin_country": "KR"}),  # 최근 한국 영화
+        ("/discover/tv", "tv", {**airing, **anime, "with_original_language": "ja"}),  # 방영 중인 일본 애니
+        ("/discover/movie", "movie", {**released_within(120), **anime}),  # 최근 애니 영화
         ("/trending/movie/week", "movie", {}),
         ("/trending/tv/week", "tv", {}),
         ("/tv/on_the_air", "tv", {}),
