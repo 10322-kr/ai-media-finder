@@ -5,10 +5,13 @@ AI Media Finder - 어렴풋한 기억으로 책/영화/드라마/애니메이션
     pip install -r requirements.txt
     PowerShell: $env:GEMINI_API_KEY="AIza..."   (https://aistudio.google.com/apikey 에서 무료 발급)
     python -m uvicorn main:app --reload
+
+선택: TMDB_API_KEY 를 설정하면 '최신작 검색' 때 TMDB의 최근 상영·방영 목록을 참고 자료로 함께 보낸다.
 """
 
 import logging
 import os
+import time
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import List, Literal, Optional
@@ -19,6 +22,8 @@ from fastapi.responses import FileResponse
 from google import genai
 from google.genai import errors, types
 from pydantic import BaseModel, Field, ValidationError
+
+import tmdb
 
 # gemini-2.5/2.0/1.5-flash는 신규 사용자에게 제공되지 않아(404) 현재 사용 가능한 모델을 사용
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
@@ -39,6 +44,9 @@ RETRYABLE_STATUS_CODES = {429, 500, 503, 504}
 # Google 검색 그라운딩: 모델 학습 이후의 최신 작품·현재 OTT 정보를 검색해서 답하게 한다.
 # 응답이 느려지거나 한도가 걱정되면 SEARCH_GROUNDING=0 으로 끈다.
 SEARCH_GROUNDING = os.getenv("SEARCH_GROUNDING", "1").strip().lower() not in {"0", "false", "no", "off"}
+# 무료 등급은 검색 한도가 거의 없어 매번 429가 난다 → 한 번 걸리면 한동안 검색을 시도하지 않아 요청을 아낀다
+GROUNDING_COOLDOWN_SECONDS = 60 * 60
+_grounding_blocked_until = 0.0
 
 # 서버 전체의 하루 검색 횟수 제한 (모든 사용자 합산, 한국 시간 자정에 초기화).
 # 공개 배포 시 다른 사람이 API 키 한도를 소진하지 않도록 막는다.
@@ -232,37 +240,54 @@ async def health_check():
 class QuotaResponse(BaseModel):
     remaining: int
     limit: int
-    latest_search: bool  # 서버에서 최신작 검색(SEARCH_GROUNDING)을 쓸 수 있는지
+    latest_search: bool  # 서버에서 최신작 검색(Google 검색 또는 TMDB 목록)을 쓸 수 있는지
 
 
 @app.get("/api/quota", response_model=QuotaResponse)
 async def get_quota() -> QuotaResponse:
     """오늘 남은 검색 횟수 (서버 전체 합산)."""
     return QuotaResponse(
-        remaining=remaining_daily_quota(), limit=DAILY_SEARCH_LIMIT, latest_search=SEARCH_GROUNDING
+        remaining=remaining_daily_quota(), limit=DAILY_SEARCH_LIMIT, latest_search=SEARCH_GROUNDING or tmdb.enabled(),
     )
 
 
 MEDIA_TYPE_NAMES = {"book": "책", "movie": "영화", "drama": "드라마", "animation": "애니메이션"}
 
 
-def build_contents(request: SearchRequest) -> str:
-    """필터가 있으면 사용자 설명 뒤에 종류 제한 조건을 붙인다."""
+def build_contents(request: SearchRequest, recent: List[tmdb.RecentItem]) -> str:
+    """사용자 설명 뒤에 종류 제한 조건과 최근 작품 목록(최신작 검색 시)을 붙인다."""
+    parts = [request.query]
     types_ = list(dict.fromkeys(request.media_types))  # 중복 제거, 순서 유지
-    if not types_ or len(types_) == len(MEDIA_TYPE_NAMES):
-        return request.query
-    names = ", ".join(f"{MEDIA_TYPE_NAMES[t]}({t})" for t in types_)
-    return (
-        f"{request.query}\n\n"
-        f"[검색 조건] 최유력 작품과 모든 후보는 반드시 다음 종류 중에서만 골라라: {names}. "
-        "media_type도 이 값들 중 하나여야 한다."
-    )
+    if types_ and len(types_) < len(MEDIA_TYPE_NAMES):
+        names = ", ".join(f"{MEDIA_TYPE_NAMES[t]}({t})" for t in types_)
+        parts.append(
+            f"[검색 조건] 최유력 작품과 모든 후보는 반드시 다음 종류 중에서만 골라라: {names}. "
+            "media_type도 이 값들 중 하나여야 한다."
+        )
+    if recent:
+        parts.append(
+            "[참고: 최근 상영·방영 작품 목록 (TMDB 기준, 제목 | 종류 | 연도 | 줄거리)]\n"
+            f"{tmdb.format_items(recent)}\n"
+            "이 목록은 학습 이후에 나온 최신작을 보충하기 위한 참고 자료다. 사용자 설명과 맞는 작품이 "
+            "목록에 있으면 우선 고려하되, 맞는 작품이 없으면 무시하고 원래 알고 있는 작품에서 찾아라."
+        )
+    return "\n\n".join(parts)
+
+
+async def recent_items_for(request: SearchRequest) -> List[tmdb.RecentItem]:
+    """최신작 검색일 때만, 필터에 맞는 종류의 최근 작품 목록 (TMDB에는 책이 없다)."""
+    if not request.latest:
+        return []
+    items = await tmdb.get_recent_items()
+    if request.media_types:
+        items = [it for it in items if it.media_type in request.media_types]
+    return items
 
 
 class SearchResult(SearchResponse):
     """API 응답. SearchResponse는 Gemini에 넘기는 스키마이기도 해서, 서버가 채우는 값은 여기에 둔다."""
 
-    latest_fallback: bool = False  # 최신작 검색을 요청했지만 검색 한도 등으로 검색 없이 답함
+    latest_fallback: bool = False  # 최신작 검색을 요청했지만 Google 검색도 TMDB 목록도 없이 답함
 
 
 @app.post("/api/search", response_model=SearchResult)
@@ -276,11 +301,15 @@ async def search_media(request: SearchRequest) -> SearchResult:
             detail=f"오늘 준비된 티켓({DAILY_SEARCH_LIMIT}장)이 모두 매진됐어요. 내일 다시 찾아 주세요!",
         )
 
-    contents = build_contents(request)
+    recent = await recent_items_for(request)
+    contents = build_contents(request, recent)
     models = [GEMINI_MODEL] + [m for m in GEMINI_FALLBACK_MODELS if m != GEMINI_MODEL]
     last_error: Optional[errors.APIError] = None
 
-    use_search = request.latest
+    global _grounding_blocked_until
+    use_search = request.latest and time.monotonic() >= _grounding_blocked_until
+    if recent:
+        logger.info("TMDB 최근 작품 %d개를 참고 자료로 보냅니다.", len(recent))
 
     for model in models:
         configs = build_configs(use_search)
@@ -301,6 +330,7 @@ async def search_media(request: SearchRequest) -> SearchResult:
                 if e.code == 429 and config.tools:
                     logger.warning("Gemini 모델 %s 검색 한도 초과로 보고 검색 없이 재시도합니다: %s", model, e.message)
                     use_search = False
+                    _grounding_blocked_until = time.monotonic() + GROUNDING_COOLDOWN_SECONDS
                     configs, i = build_configs(False), 0
                     continue
                 if e.code in RETRYABLE_STATUS_CODES:
@@ -319,7 +349,9 @@ async def search_media(request: SearchRequest) -> SearchResult:
             except ValidationError as e:
                 raise HTTPException(status_code=502, detail="AI 응답을 해석하지 못했습니다. 다시 시도해 주세요.") from e
             # 최신작 검색을 요청했지만 검색 없이 답한 경우 화면에 알린다
-            return SearchResult(**result.model_dump(), latest_fallback=request.latest and not config.tools)
+            return SearchResult(
+                **result.model_dump(), latest_fallback=request.latest and not config.tools and not recent
+            )
 
     # 모든 모델이 일시 오류로 실패한 경우
     if last_error is not None and last_error.code == 429:
