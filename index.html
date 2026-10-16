@@ -321,6 +321,48 @@
       transform: rotate(-1.5deg);
     }
 
+    /* 최신작 검색 스위치: 켜면 Google 검색으로 현재 상영작·최근 작품까지 찾는다 */
+    .latest-toggle {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 6px 10px;
+      margin: -4px 0 14px;
+      padding: 0;
+      border: none;
+      background: none;
+      color: var(--ink);
+      font-family: var(--font-body);
+      text-align: left;
+      cursor: pointer;
+    }
+    .latest-toggle[hidden] { display: none; }
+    .latest-toggle:focus-visible { outline: 2px solid var(--mustard); outline-offset: 3px; border-radius: 4px; }
+    .latest-toggle__track {
+      position: relative;
+      width: 38px;
+      height: 20px;
+      flex-shrink: 0;
+      border: 1.5px solid var(--ink);
+      border-radius: 999px;
+      background: rgba(43, 33, 24, 0.08);
+      transition: background-color 0.15s, border-color 0.15s;
+    }
+    .latest-toggle__knob {
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      width: 13px;
+      height: 13px;
+      border-radius: 50%;
+      background: var(--ink);
+      transition: transform 0.15s, background-color 0.15s;
+    }
+    .latest-toggle[aria-checked="true"] .latest-toggle__track { border-color: var(--red); background: var(--red); }
+    .latest-toggle[aria-checked="true"] .latest-toggle__knob { transform: translateX(18px); background: #fff3dc; }
+    .latest-toggle__label { font-size: 0.92rem; font-weight: 700; }
+    .latest-toggle__hint { font-size: 0.78rem; color: var(--ink-soft); }
+
     .search-ticket__stub {
       width: 190px;
       flex-shrink: 0;
@@ -957,6 +999,11 @@
           <button type="button" data-type="animation" aria-pressed="false">애니</button>
           <button type="button" data-type="book" aria-pressed="false">도서</button>
         </fieldset>
+        <button type="button" class="latest-toggle" id="latestToggle" role="switch" aria-checked="false" hidden>
+          <span class="latest-toggle__track" aria-hidden="true"><span class="latest-toggle__knob"></span></span>
+          <span class="latest-toggle__label">최신작 검색</span>
+          <span class="latest-toggle__hint">지금 상영 중 · 최근 작품까지 찾아요 (조금 느려요)</span>
+        </button>
         <div class="memo">
           <textarea
             id="queryInput"
@@ -1091,6 +1138,7 @@
     const saveBtn = $("saveBtn");
     const typeFilter = $("typeFilter");
     const stubQuota = $("stubQuota");
+    const latestToggle = $("latestToggle");
 
     let loadingTimer = null;
     let lastTitle = "";
@@ -1189,12 +1237,19 @@
       try {
         const res = await fetch(`${API_BASE}/api/quota`);
         if (!res.ok) return;
-        const { remaining, limit } = await res.json();
+        const { remaining, limit, latest_search } = await res.json();
         renderQuota(remaining, limit);
+        // 서버에서 최신작 검색을 꺼 두었으면(SEARCH_GROUNDING=0) 스위치를 숨긴다
+        latestToggle.hidden = !latest_search;
+        if (!latest_search) latestToggle.setAttribute("aria-checked", "false");
       } catch (_) { /* 서버 연결 실패 시 표시하지 않음 */ }
     }
 
-    async function search(query, mediaTypes) {
+    latestToggle.addEventListener("click", () => {
+      latestToggle.setAttribute("aria-checked", String(latestToggle.getAttribute("aria-checked") !== "true"));
+    });
+
+    async function search(query, mediaTypes, latest) {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
@@ -1202,7 +1257,7 @@
         const res = await fetch(`${API_BASE}/api/search`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ query, media_types: mediaTypes }),
+          body: JSON.stringify({ query, media_types: mediaTypes, latest }),
           signal: controller.signal,
         });
 
@@ -1339,7 +1394,7 @@
       result.classList.remove("is-active");
       setLoading(true);
       try {
-        const data = await search(query, selectedTypes());
+        const data = await search(query, selectedTypes(), latestToggle.getAttribute("aria-checked") === "true");
         renderResult(data);
       } catch (err) {
         showError(err.message);

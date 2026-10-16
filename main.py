@@ -124,6 +124,7 @@ class SearchRequest(BaseModel):
         max_length=4,
         description="이 종류의 작품만 찾는다. 비어 있으면 모든 종류",
     )
+    latest: bool = Field(False, description="Google 검색으로 최신작·현재 상영작까지 찾는다 (느리고 한도를 더 씀)")
 
 
 class Candidate(BaseModel):
@@ -169,22 +170,28 @@ SYSTEM_PROMPT = """너는 책, 영화, 드라마, 애니메이션에 정통한 �
 - candidates에는 최유력 작품을 제외한 후보를 2~4개 넣어라.
 - 실제로 존재하는 작품만 제시하고, 확실하지 않은 정보는 지어내지 말고 null 또는 빈 배열로 둬라.
 - OTT 정보는 시기에 따라 바뀔 수 있으므로 확실한 것만 넣어라.
-- 모든 설명 문장은 한국어로 작성하라.
-- 검색 도구를 쓸 수 있다면 답하기 전에 반드시 검색하라. 학습 이후에 나온 최신작·현재 상영작일 수 있으니
+- 모든 설명 문장은 한국어로 작성하라."""
+
+# 최신작 검색을 켰을 때만 붙이는 규칙 (검색 결과가 입력 토큰으로 들어가고 검색 한도도 쓰므로 필요할 때만)
+GROUNDING_RULE = """- 답하기 전에 반드시 검색 도구로 검색하라. 학습 이후에 나온 최신작·현재 상영작일 수 있으니
   기억만으로 판단하지 말고, 사용자 설명의 핵심 단서로 검색해 후보를 확인하고 OTT 정보도 검색으로 확인하라."""
 
 
-def build_configs() -> List[types.GenerateContentConfig]:
+def build_configs(latest: bool) -> List[types.GenerateContentConfig]:
     """시도할 요청 설정 목록 (앞에서부터 시도).
 
+    최신작 검색(latest)을 켜면:
     1) 검색 + JSON 스키마 강제  2) 검색만 (모델이 조합을 지원하지 않을 때, 프롬프트로 JSON 유도)
     3) 검색 없이 JSON 스키마 강제 (모델이 검색 도구 자체를 지원하지 않을 때)
+    끄면 3)만 사용한다.
     """
+    use_search = latest and SEARCH_GROUNDING
+    prompt = f"{SYSTEM_PROMPT}\n{GROUNDING_RULE}" if use_search else SYSTEM_PROMPT
     # 오늘 날짜를 알려줘야 '최근', '올해' 같은 표현을 제대로 해석한다
-    system = f"{SYSTEM_PROMPT}\n\n오늘 날짜: {datetime.now(KST).date().isoformat()}"
+    system = f"{prompt}\n\n오늘 날짜: {datetime.now(KST).date().isoformat()}"
     schema = dict(response_mime_type="application/json", response_schema=SearchResponse)
     search = dict(tools=[types.Tool(google_search=types.GoogleSearch())])
-    variants = [{**search, **schema}, search, schema] if SEARCH_GROUNDING else [schema]
+    variants = [{**search, **schema}, search, schema] if use_search else [schema]
     return [types.GenerateContentConfig(system_instruction=system, temperature=0.3, **v) for v in variants]
 
 
@@ -217,12 +224,15 @@ async def health_check():
 class QuotaResponse(BaseModel):
     remaining: int
     limit: int
+    latest_search: bool  # 서버에서 최신작 검색(SEARCH_GROUNDING)을 쓸 수 있는지
 
 
 @app.get("/api/quota", response_model=QuotaResponse)
 async def get_quota() -> QuotaResponse:
     """오늘 남은 검색 횟수 (서버 전체 합산)."""
-    return QuotaResponse(remaining=remaining_daily_quota(), limit=DAILY_SEARCH_LIMIT)
+    return QuotaResponse(
+        remaining=remaining_daily_quota(), limit=DAILY_SEARCH_LIMIT, latest_search=SEARCH_GROUNDING
+    )
 
 
 MEDIA_TYPE_NAMES = {"book": "책", "movie": "영화", "drama": "드라마", "animation": "애니메이션"}
@@ -257,7 +267,7 @@ async def search_media(request: SearchRequest) -> SearchResponse:
     last_error: Optional[errors.APIError] = None
 
     for model in models:
-        configs = build_configs()
+        configs = build_configs(request.latest)
         for i, config in enumerate(configs):
             try:
                 response = await get_client().aio.models.generate_content(
