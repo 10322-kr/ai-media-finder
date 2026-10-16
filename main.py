@@ -36,6 +36,10 @@ GEMINI_FALLBACK_MODELS = [
 # 429: 모델별 무료 할당량 초과, 500: 내부 오류, 503: 과부하(UNAVAILABLE), 504: 시간 초과
 RETRYABLE_STATUS_CODES = {429, 500, 503, 504}
 
+# Google 검색 그라운딩: 모델 학습 이후의 최신 작품·현재 OTT 정보를 검색해서 답하게 한다.
+# 응답이 느려지거나 한도가 걱정되면 SEARCH_GROUNDING=0 으로 끈다.
+SEARCH_GROUNDING = os.getenv("SEARCH_GROUNDING", "1").strip().lower() not in {"0", "false", "no", "off"}
+
 # 서버 전체의 하루 검색 횟수 제한 (모든 사용자 합산, 한국 시간 자정에 초기화).
 # 공개 배포 시 다른 사람이 API 키 한도를 소진하지 않도록 막는다.
 # 메모리에만 저장하므로 서버가 재시작되거나 잠들면(Render 무료 플랜) 0으로 돌아간다.
@@ -165,7 +169,30 @@ SYSTEM_PROMPT = """너는 책, 영화, 드라마, 애니메이션에 정통한 �
 - candidates에는 최유력 작품을 제외한 후보를 2~4개 넣어라.
 - 실제로 존재하는 작품만 제시하고, 확실하지 않은 정보는 지어내지 말고 null 또는 빈 배열로 둬라.
 - OTT 정보는 시기에 따라 바뀔 수 있으므로 확실한 것만 넣어라.
-- 모든 설명 문장은 한국어로 작성하라."""
+- 모든 설명 문장은 한국어로 작성하라.
+- 검색 도구를 쓸 수 있다면 최근 작품이거나 확신이 없을 때, 그리고 OTT 정보를 확인할 때 검색하라."""
+
+
+def build_configs() -> List[types.GenerateContentConfig]:
+    """시도할 요청 설정 목록 (앞에서부터 시도).
+
+    1) 검색 + JSON 스키마 강제  2) 검색만 (모델이 조합을 지원하지 않을 때, 프롬프트로 JSON 유도)
+    3) 검색 없이 JSON 스키마 강제 (모델이 검색 도구 자체를 지원하지 않을 때)
+    """
+    # 오늘 날짜를 알려줘야 '최근', '올해' 같은 표현을 제대로 해석한다
+    system = f"{SYSTEM_PROMPT}\n\n오늘 날짜: {datetime.now(KST).date().isoformat()}"
+    schema = dict(response_mime_type="application/json", response_schema=SearchResponse)
+    search = dict(tools=[types.Tool(google_search=types.GoogleSearch())])
+    variants = [{**search, **schema}, search, schema] if SEARCH_GROUNDING else [schema]
+    return [types.GenerateContentConfig(system_instruction=system, temperature=0.3, **v) for v in variants]
+
+
+def parse_response(text: str) -> SearchResponse:
+    """스키마를 강제하지 못한 응답은 ```json 코드 블록이나 앞뒤 문장이 섞여 올 수 있어 JSON 부분만 꺼낸다."""
+    start, end = text.find("{"), text.rfind("}")
+    if start != -1 and end > start:
+        text = text[start : end + 1]
+    return SearchResponse.model_validate_json(text)
 
 
 @app.get("/", include_in_schema=False)
@@ -217,32 +244,32 @@ async def search_media(request: SearchRequest) -> SearchResponse:
             detail=f"오늘 준비된 티켓({DAILY_SEARCH_LIMIT}장)이 모두 매진됐어요. 내일 다시 찾아 주세요!",
         )
 
-    config = types.GenerateContentConfig(
-        system_instruction=SYSTEM_PROMPT,
-        response_mime_type="application/json",
-        response_schema=SearchResponse,  # 스키마를 강제해 항상 같은 JSON 구조로 응답받는다
-        temperature=0.3,
-    )
     contents = build_contents(request)
     models = [GEMINI_MODEL] + [m for m in GEMINI_FALLBACK_MODELS if m != GEMINI_MODEL]
     last_error: Optional[errors.APIError] = None
 
     for model in models:
-        try:
-            response = await get_client().aio.models.generate_content(
-                model=model, contents=contents, config=config
-            )
-        except errors.APIError as e:
-            if e.code in RETRYABLE_STATUS_CODES:
-                logger.warning("Gemini 모델 %s 일시 오류(%s), 다음 모델로 재시도합니다.", model, e.code)
-                last_error = e
-                continue
-            raise HTTPException(status_code=502, detail=f"Gemini API 호출 실패: {e}") from e
+        configs = build_configs()
+        for i, config in enumerate(configs):
+            try:
+                response = await get_client().aio.models.generate_content(
+                    model=model, contents=contents, config=config
+                )
+            except errors.APIError as e:
+                # 400: 이 모델이 검색 도구(또는 도구+JSON 스키마 조합)를 지원하지 않음 → 다음 방식으로
+                if e.code == 400 and i < len(configs) - 1:
+                    logger.warning("Gemini 모델 %s가 설정 %d을(를) 거부(%s), 다음 방식으로 재시도합니다.", model, i, e)
+                    continue
+                if e.code in RETRYABLE_STATUS_CODES:
+                    logger.warning("Gemini 모델 %s 일시 오류(%s), 다음 모델로 재시도합니다.", model, e.code)
+                    last_error = e
+                    break
+                raise HTTPException(status_code=502, detail=f"Gemini API 호출 실패: {e}") from e
 
-        try:
-            return SearchResponse.model_validate_json(response.text or "")
-        except ValidationError as e:
-            raise HTTPException(status_code=502, detail="AI 응답을 해석하지 못했습니다. 다시 시도해 주세요.") from e
+            try:
+                return parse_response(response.text or "")
+            except ValidationError as e:
+                raise HTTPException(status_code=502, detail="AI 응답을 해석하지 못했습니다. 다시 시도해 주세요.") from e
 
     # 모든 모델이 일시 오류로 실패한 경우
     if last_error is not None and last_error.code == 429:
