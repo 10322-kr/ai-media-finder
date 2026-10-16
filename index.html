@@ -1125,7 +1125,7 @@
         </span>
         <h2 id="formHeading">어렴풋한 기억을 적어주세요</h2>
         <fieldset class="type-filter" id="typeFilter">
-          <legend>상영관</legend>
+          <legend id="filterLabel">상영관</legend>
           <button type="button" data-type="" aria-pressed="true">전체</button>
           <button type="button" data-type="movie" aria-pressed="false">영화</button>
           <button type="button" data-type="drama" aria-pressed="false">드라마</button>
@@ -1134,8 +1134,8 @@
         </fieldset>
         <button type="button" class="latest-toggle" id="latestToggle" role="switch" aria-checked="false" hidden>
           <span class="latest-toggle__track" aria-hidden="true"><span class="latest-toggle__knob"></span></span>
-          <span class="latest-toggle__label">최신작 검색</span>
-          <span class="latest-toggle__hint">지금 상영 중 · 최근 작품까지 찾아요 (조금 느려요)</span>
+          <span class="latest-toggle__label" id="latestLabel">최신작 검색</span>
+          <span class="latest-toggle__hint" id="latestHint">지금 상영 중 · 최근 작품까지 찾아요 (조금 느려요)</span>
         </button>
         <div class="memo">
           <textarea
@@ -1295,6 +1295,9 @@
         heading: "어렴풋한 기억을 적어주세요",
         placeholder: "예) 주인공이 매일 같은 하루를 반복하는데, 결국 사랑을 깨닫는 영화였던 것 같아요",
         inputLabel: "찾고 싶은 작품에 대한 설명",
+        filterLabel: "상영관",
+        latestLabel: "최신작 검색",
+        latestHint: "지금 상영 중 · 최근 작품까지 찾아요 (조금 느려요)",
         tooShort: "기억나는 내용을 조금만 더 적어주세요. (2자 이상)",
         chips: [
           ["고양이 버스 애니", "소년이 고양이 버스를 타고 숲의 정령을 만나는 애니메이션"],
@@ -1317,6 +1320,9 @@
         heading: "좋아하는 작품과 취향을 적어주세요",
         placeholder: "예) 기생충이랑 올드보이처럼 반전 있는 스릴러가 좋아요. 너무 잔인한 건 싫어요",
         inputLabel: "좋아하는 작품과 취향",
+        filterLabel: "추천받을 종류",
+        latestLabel: "최신작 포함",
+        latestHint: "최근 상영·방영작도 추천에 섞어요 (조금 느려요)",
         tooShort: "좋아하는 작품이나 취향을 조금만 더 적어주세요. (2자 이상)",
         chips: [
           ["반전 스릴러", "기생충, 올드보이처럼 반전이 있는 스릴러가 좋아요"],
@@ -1650,6 +1656,9 @@
       $("formHeading").textContent = m.heading;
       input.placeholder = m.placeholder;
       input.setAttribute("aria-label", m.inputLabel);
+      $("filterLabel").textContent = m.filterLabel;
+      $("latestLabel").textContent = m.latestLabel;
+      $("latestHint").textContent = m.latestHint;
       input.value = drafts[mode];
 
       const chips = $("hintChips");
