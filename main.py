@@ -170,7 +170,8 @@ SYSTEM_PROMPT = """너는 책, 영화, 드라마, 애니메이션에 정통한 �
 - 실제로 존재하는 작품만 제시하고, 확실하지 않은 정보는 지어내지 말고 null 또는 빈 배열로 둬라.
 - OTT 정보는 시기에 따라 바뀔 수 있으므로 확실한 것만 넣어라.
 - 모든 설명 문장은 한국어로 작성하라.
-- 검색 도구를 쓸 수 있다면 최근 작품이거나 확신이 없을 때, 그리고 OTT 정보를 확인할 때 검색하라."""
+- 검색 도구를 쓸 수 있다면 답하기 전에 반드시 검색하라. 학습 이후에 나온 최신작·현재 상영작일 수 있으니
+  기억만으로 판단하지 말고, 사용자 설명의 핵심 단서로 검색해 후보를 확인하고 OTT 정보도 검색으로 확인하라."""
 
 
 def build_configs() -> List[types.GenerateContentConfig]:
@@ -185,6 +186,13 @@ def build_configs() -> List[types.GenerateContentConfig]:
     search = dict(tools=[types.Tool(google_search=types.GoogleSearch())])
     variants = [{**search, **schema}, search, schema] if SEARCH_GROUNDING else [schema]
     return [types.GenerateContentConfig(system_instruction=system, temperature=0.3, **v) for v in variants]
+
+
+def log_grounding(model: str, config_index: int, response: types.GenerateContentResponse) -> None:
+    """모델이 검색 도구를 받고도 실제로 검색했는지는 모델이 정하므로, 실제 검색어를 로그로 남긴다."""
+    meta = response.candidates[0].grounding_metadata if response.candidates else None
+    queries = (meta.web_search_queries if meta else None) or []
+    logger.info("Gemini 모델 %s 응답 (설정 %d), 검색어: %s", model, config_index, queries or "검색 안 함")
 
 
 def parse_response(text: str) -> SearchResponse:
@@ -268,6 +276,7 @@ async def search_media(request: SearchRequest) -> SearchResponse:
                 raise HTTPException(status_code=502, detail=f"Gemini API 호출 실패: {e}") from e
 
             try:
+                log_grounding(model, i, response)
                 return parse_response(response.text or "")
             except ValidationError as e:
                 raise HTTPException(status_code=502, detail="AI 응답을 해석하지 못했습니다. 다시 시도해 주세요.") from e
