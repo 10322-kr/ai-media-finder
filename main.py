@@ -11,17 +11,18 @@ AI Media Finder - 어렴풋한 기억으로 책/영화/드라마/애니메이션
 
 import logging
 import os
+import re
 import time
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import List, Literal, Optional, Tuple, Type, TypeVar
+from typing import Annotated, List, Literal, Optional, Tuple, Type, TypeVar
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from google import genai
 from google.genai import errors, types
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import AfterValidator, BaseModel, Field, ValidationError
 
 import tmdb
 
@@ -135,6 +136,37 @@ class SearchRequest(BaseModel):
     latest: bool = Field(False, description="TMDB 목록·Google 검색으로 최신작·현재 상영작까지 찾는다 (느리고 한도를 더 씀)")
 
 
+# 모델이 OTT 이름을 한글(티빙, 넷플릭스…)이나 제각각 표기로 줄 때가 있어 영문 공식 표기로 맞춘다.
+# 키는 소문자에서 공백·기호를 뺀 형태.
+OTT_ALIASES = {
+    "netflix": "Netflix", "넷플릭스": "Netflix",
+    "tving": "TVING", "티빙": "TVING", "t빙": "TVING",
+    "wavve": "Wavve", "웨이브": "Wavve",
+    "coupangplay": "Coupang Play", "쿠팡플레이": "Coupang Play", "쿠팡": "Coupang Play",
+    "watcha": "Watcha", "왓챠": "Watcha", "왓차": "Watcha",
+    "disney": "Disney+", "disneyplus": "Disney+", "디즈니": "Disney+", "디즈니플러스": "Disney+",
+    "appletv": "Apple TV+", "appletvplus": "Apple TV+", "애플tv": "Apple TV+", "애플티비": "Apple TV+",
+    "primevideo": "Prime Video", "amazonprimevideo": "Prime Video", "프라임비디오": "Prime Video",
+    "아마존프라임비디오": "Prime Video",
+    "laftel": "Laftel", "라프텔": "Laftel",
+    "youtube": "YouTube", "유튜브": "YouTube",
+}
+
+
+def normalize_platforms(platforms: List[str]) -> List[str]:
+    """OTT 이름을 공식 영문 표기로 바꾸고 중복을 없앤다. 모르는 이름은 그대로 둔다."""
+    result: List[str] = []
+    for name in platforms:
+        key = re.sub(r"[\s+\-_.·]", "", name.strip().lower())
+        canonical = OTT_ALIASES.get(key, name.strip())
+        if canonical and canonical not in result:
+            result.append(canonical)
+    return result
+
+
+OttPlatforms = Annotated[List[str], AfterValidator(normalize_platforms)]
+
+
 class Candidate(BaseModel):
     title: str
     media_type: MediaType
@@ -146,7 +178,7 @@ class SearchResponse(BaseModel):
     title: str
     media_type: MediaType
     release_year: Optional[int] = None
-    ott_platforms: List[str] = Field(default_factory=list)
+    ott_platforms: OttPlatforms = Field(default_factory=list)
     one_liner_summary: str
     match_reason: str
     candidates: List[Candidate] = Field(default_factory=list)
@@ -156,7 +188,7 @@ class Recommendation(BaseModel):
     title: str
     media_type: MediaType
     release_year: Optional[int] = None
-    ott_platforms: List[str] = Field(default_factory=list)
+    ott_platforms: OttPlatforms = Field(default_factory=list)
     reason: str = Field(..., description="사용자 취향과 어떤 점이 닮았는지")
 
 
@@ -206,7 +238,7 @@ RECOMMEND_PROMPT = """너는 책, 영화, 드라마, 애니메이션에 정통�
       "title": "추천 작품 제목 (한국어 제목이 있으면 한국어 제목, 괄호 안에 원제)",
       "media_type": "book | movie | drama | animation 중 하나",
       "release_year": 정수 또는 null,
-      "ott_platforms": ["한국에서 시청 가능한 것으로 알려진 OTT 플랫폼. 책이거나 모르면 빈 배열"],
+      "ott_platforms": ["한국에서 시청 가능한 것으로 알려진 OTT 플랫폼을 영문 표기로 (예: Netflix, Disney+, TVING, Wavve, Coupang Play, Watcha, Apple TV+, Prime Video). 책이거나 모르면 빈 배열"],
       "reason": "사용자가 좋아한 작품과 어떤 점이 닮았는지 스포일러 없이 구체적으로 1~2문장"
     }
   ]
