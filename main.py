@@ -195,11 +195,19 @@ def build_configs(latest: bool) -> List[types.GenerateContentConfig]:
     return [types.GenerateContentConfig(system_instruction=system, temperature=0.3, **v) for v in variants]
 
 
-def log_grounding(model: str, config_index: int, response: types.GenerateContentResponse) -> None:
+def log_grounding(model: str, config: types.GenerateContentConfig, response: types.GenerateContentResponse) -> None:
     """모델이 검색 도구를 받고도 실제로 검색했는지는 모델이 정하므로, 실제 검색어를 로그로 남긴다."""
     meta = response.candidates[0].grounding_metadata if response.candidates else None
     queries = (meta.web_search_queries if meta else None) or []
-    logger.info("Gemini 모델 %s 응답 (설정 %d), 검색어: %s", model, config_index, queries or "검색 안 함")
+    logger.info(
+        "Gemini 모델 %s 응답 (%s), 검색어: %s", model, describe_config(config), queries or "검색 안 함"
+    )
+
+
+def describe_config(config: types.GenerateContentConfig) -> str:
+    """로그용: 이 요청에 검색 도구를 줬는지와 JSON 스키마를 강제했는지."""
+    tool = "검색 도구 제공" if config.tools else "검색 도구 없음"
+    return f"{tool}, {'JSON 강제' if config.response_schema else 'JSON 미강제'}"
 
 
 def parse_response(text: str) -> SearchResponse:
@@ -297,13 +305,16 @@ async def search_media(request: SearchRequest) -> SearchResult:
                     continue
                 if e.code in RETRYABLE_STATUS_CODES:
                     # 어떤 한도(분당/일일, 검색 그라운딩 등)에 걸렸는지 알 수 있게 Google의 메시지도 남긴다
-                    logger.warning("Gemini 모델 %s 일시 오류(%s), 다음 모델로 재시도합니다: %s", model, e.code, e.message)
+                    logger.warning(
+                        "Gemini 모델 %s 일시 오류(%s, %s), 다음 모델로 재시도합니다: %s",
+                        model, e.code, describe_config(config), e.message,
+                    )
                     last_error = e
                     break
                 raise HTTPException(status_code=502, detail=f"Gemini API 호출 실패: {e}") from e
 
             try:
-                log_grounding(model, i, response)
+                log_grounding(model, config, response)
                 result = parse_response(response.text or "")
             except ValidationError as e:
                 raise HTTPException(status_code=502, detail="AI 응답을 해석하지 못했습니다. 다시 시도해 주세요.") from e
