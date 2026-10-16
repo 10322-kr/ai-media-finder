@@ -251,8 +251,14 @@ def build_contents(request: SearchRequest) -> str:
     )
 
 
-@app.post("/api/search", response_model=SearchResponse)
-async def search_media(request: SearchRequest) -> SearchResponse:
+class SearchResult(SearchResponse):
+    """API 응답. SearchResponse는 Gemini에 넘기는 스키마이기도 해서, 서버가 채우는 값은 여기에 둔다."""
+
+    latest_fallback: bool = False  # 최신작 검색을 요청했지만 검색 한도 등으로 검색 없이 답함
+
+
+@app.post("/api/search", response_model=SearchResult)
+async def search_media(request: SearchRequest) -> SearchResult:
     if not (os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")):
         raise HTTPException(status_code=500, detail="GEMINI_API_KEY 환경변수가 설정되지 않았습니다.")
 
@@ -266,9 +272,13 @@ async def search_media(request: SearchRequest) -> SearchResponse:
     models = [GEMINI_MODEL] + [m for m in GEMINI_FALLBACK_MODELS if m != GEMINI_MODEL]
     last_error: Optional[errors.APIError] = None
 
+    use_search = request.latest
+
     for model in models:
-        configs = build_configs(request.latest)
-        for i, config in enumerate(configs):
+        configs = build_configs(use_search)
+        i = 0
+        while i < len(configs):
+            config = configs[i]
             try:
                 response = await get_client().aio.models.generate_content(
                     model=model, contents=contents, config=config
@@ -277,6 +287,13 @@ async def search_media(request: SearchRequest) -> SearchResponse:
                 # 400: 이 모델이 검색 도구(또는 도구+JSON 스키마 조합)를 지원하지 않음 → 다음 방식으로
                 if e.code == 400 and i < len(configs) - 1:
                     logger.warning("Gemini 모델 %s가 설정 %d을(를) 거부(%s), 다음 방식으로 재시도합니다.", model, i, e)
+                    i += 1
+                    continue
+                # 검색 그라운딩은 한도가 따로라 먼저 소진된다 → 이번 요청은 남은 모델까지 검색 없이 진행
+                if e.code == 429 and config.tools:
+                    logger.warning("Gemini 모델 %s 검색 한도 초과로 보고 검색 없이 재시도합니다: %s", model, e.message)
+                    use_search = False
+                    configs, i = build_configs(False), 0
                     continue
                 if e.code in RETRYABLE_STATUS_CODES:
                     # 어떤 한도(분당/일일, 검색 그라운딩 등)에 걸렸는지 알 수 있게 Google의 메시지도 남긴다
@@ -287,9 +304,11 @@ async def search_media(request: SearchRequest) -> SearchResponse:
 
             try:
                 log_grounding(model, i, response)
-                return parse_response(response.text or "")
+                result = parse_response(response.text or "")
             except ValidationError as e:
                 raise HTTPException(status_code=502, detail="AI 응답을 해석하지 못했습니다. 다시 시도해 주세요.") from e
+            # 최신작 검색을 요청했지만 검색 없이 답한 경우 화면에 알린다
+            return SearchResult(**result.model_dump(), latest_fallback=request.latest and not config.tools)
 
     # 모든 모델이 일시 오류로 실패한 경우
     if last_error is not None and last_error.code == 429:

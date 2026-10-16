@@ -555,6 +555,9 @@
     .error-slip.is-active { display: block; }
     .error-slip strong { font-family: var(--font-display); color: var(--red); font-size: 1.1rem; }
     .error-slip p { margin-top: 6px; font-size: 0.92rem; line-height: 1.5; }
+    /* 안내 쪽지: 최신작 검색을 못 하고 일반 검색으로 답했을 때 */
+    .error-slip--notice { border-left-color: var(--mustard); }
+    .error-slip--notice strong { color: #9a6a12; }
 
     /* ===================== 결과 포토카드 ===================== */
     .result { display: none; margin-top: 40px; }
@@ -1044,6 +1047,10 @@
       <strong>상영 취소</strong>
       <p id="errorMsg"></p>
     </div>
+    <div class="error-slip error-slip--notice" id="fallbackSlip" role="status">
+      <strong>일반 상영으로 변경</strong>
+      <p>지금은 최신작 검색을 쓸 수 없어서(검색 한도 초과 등), 검색 없이 AI가 알고 있는 작품 중에서 찾았어요. 최근 작품이라면 잠시 후나 내일 다시 찾아 주세요.</p>
+    </div>
 
     <!-- 결과 -->
     <section class="result" id="result" aria-live="polite">
@@ -1392,9 +1399,11 @@
       }
 
       result.classList.remove("is-active");
+      $("fallbackSlip").classList.remove("is-active");
       setLoading(true);
       try {
         const data = await search(query, selectedTypes(), latestToggle.getAttribute("aria-checked") === "true");
+        $("fallbackSlip").classList.toggle("is-active", Boolean(data.latest_fallback));
         renderResult(data);
       } catch (err) {
         showError(err.message);
@@ -1424,6 +1433,7 @@
 
     $("againBtn").addEventListener("click", () => {
       result.classList.remove("is-active");
+      $("fallbackSlip").classList.remove("is-active");
       hideError();
       input.value = "";
       window.scrollTo({ top: 0, behavior: "smooth" });
