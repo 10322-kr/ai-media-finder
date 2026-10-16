@@ -926,6 +926,123 @@
       text-shadow: 0 1px 0 rgba(255, 255, 255, 0.6);
     }
 
+    /* ===================== 창구 탭 (기억으로 찾기 / 취향 추천) ===================== */
+    .booth-tabs {
+      display: flex;
+      justify-content: center;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin: -14px 0 22px;
+    }
+    /* 매표소 창구 명판: 어두운 나무판 + 금빛 글자, 고른 창구는 불이 켜진다 */
+    .booth-tab {
+      min-width: 168px;
+      padding: 8px 18px 7px;
+      border: 1px solid rgba(227, 167, 47, 0.45);
+      border-bottom: 3px solid #120c08;
+      border-radius: 6px;
+      background: linear-gradient(180deg, #3a2c22 0%, var(--ink) 100%);
+      color: #f0d9a8;
+      font-family: "Do Hyeon", var(--font-display);
+      font-size: 1.12rem;
+      letter-spacing: 0.04em;
+      cursor: pointer;
+      transition: transform 0.12s, background-color 0.15s;
+    }
+    .booth-tab small {
+      display: block;
+      font-family: var(--font-mono);
+      font-weight: 700;
+      font-size: 0.62rem;
+      letter-spacing: 0.22em;
+      color: var(--mustard);
+    }
+    .booth-tab:hover { transform: translateY(-1px); }
+    .booth-tab:focus-visible { outline: 3px solid var(--mustard); outline-offset: 3px; }
+    .booth-tab[aria-selected="true"] {
+      background: linear-gradient(180deg, #f6c454 0%, var(--mustard) 100%);
+      border-color: #8f6512;
+      color: var(--ink);
+      box-shadow: 0 0 18px rgba(255, 200, 110, 0.45);
+    }
+    .booth-tab[aria-selected="true"] small { color: #5a3a12; }
+
+    /* 다른 창구의 결과는 숨긴다 (.result.is-active의 display보다 우선) */
+    .result[hidden] { display: none !important; }
+
+    /* ===================== 추천 상영 시간표 ===================== */
+    .photocard.schedule { width: 460px; }
+    .schedule__head {
+      padding: 14px 16px 12px;
+      text-align: center;
+      background: linear-gradient(180deg, #3a2c22 0%, var(--ink) 100%);
+      border-bottom: 3px solid #120c08;
+    }
+    .schedule__kicker {
+      display: block;
+      font-family: var(--font-mono);
+      font-weight: 700;
+      font-size: 0.66rem;
+      letter-spacing: 0.24em;
+      color: var(--mustard);
+    }
+    .schedule__title {
+      margin-top: 2px;
+      font-family: "Do Hyeon", var(--font-display);
+      font-size: 1.9rem;
+      font-weight: 400;
+      color: #fbe7b0;
+      text-shadow: 1px 1px 0 #dcaa52, 2px 2px 0 #ab7a2e, 3px 4px 6px rgba(0, 0, 0, 0.6);
+    }
+    .schedule .card-body { padding-bottom: 0; }
+    .schedule .section-label { margin-top: 0; }
+    .schedule .one-liner { border-bottom: none; padding-bottom: 6px; }
+    .showtimes { list-style: none; padding: 0 16px; }
+    .showtime {
+      display: flex;
+      gap: 12px;
+      padding: 12px 0;
+      border-top: 1px dotted var(--cream-line);
+    }
+    /* 상영 회차 번호 */
+    .showtime__no {
+      flex-shrink: 0;
+      width: 42px;
+      padding-top: 2px;
+      font-family: "Do Hyeon", var(--font-display);
+      font-size: 1.6rem;
+      line-height: 1;
+      color: var(--red);
+      text-align: center;
+    }
+    .showtime__no small {
+      display: block;
+      margin-top: 3px;
+      font-family: var(--font-mono);
+      font-weight: 700;
+      font-size: 0.55rem;
+      letter-spacing: 0.15em;
+      color: var(--ink-soft);
+    }
+    .showtime__body { flex: 1; min-width: 0; }
+    .showtime__title {
+      font-family: var(--font-serif);
+      font-weight: 800;
+      font-size: 1.05rem;
+      line-height: 1.35;
+      word-break: keep-all;
+    }
+    .showtime__meta {
+      margin-left: 6px;
+      font-family: var(--font-mono);
+      font-size: 0.7rem;
+      color: var(--ink-soft);
+      white-space: nowrap;
+    }
+    .showtime .ott-tags { margin: 6px 0 4px; gap: 6px; }
+    .showtime__reason { font-size: 0.84rem; line-height: 1.55; color: var(--ink); word-break: keep-all; }
+    .schedule .tear { margin-top: 4px; }
+
     .footnote {
       margin-top: 40px;
       text-align: center;
@@ -952,6 +1069,9 @@
       .export-area { padding: 22px 14px 26px; }
       .poster { height: 200px; }
       .poster__title { font-size: 1.75rem; }
+      .booth-tab { min-width: 0; flex: 1; padding: 7px 10px 6px; font-size: 1rem; }
+      .schedule__title { font-size: 1.6rem; }
+      .showtimes { padding: 0 12px; }
     }
     /* 좁은 화면에서는 티켓 정보·바코드와 겹치지 않도록 도장을 숨긴다 */
     @media (max-width: 420px) {
@@ -983,17 +1103,27 @@
       <p>★ AI Media Finder · Now Showing ★</p>
     </header>
 
+    <!-- 창구 탭 -->
+    <nav class="booth-tabs" id="boothTabs" role="tablist" aria-label="이용할 창구">
+      <button type="button" class="booth-tab" role="tab" data-mode="search" aria-selected="true" aria-controls="searchForm">
+        <small>WINDOW 1</small>기억으로 찾기
+      </button>
+      <button type="button" class="booth-tab" role="tab" data-mode="recommend" aria-selected="false" aria-controls="searchForm">
+        <small>WINDOW 2</small>취향 추천
+      </button>
+    </nav>
+
     <!-- 검색 티켓 -->
-    <form class="search-ticket" id="searchForm" autocomplete="off">
+    <form class="search-ticket" id="searchForm" autocomplete="off" role="tabpanel">
       <div class="search-ticket__main">
         <span class="ticket-stamp">
           <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <path d="M11 4H5a1 1 0 0 0-1 1v14a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-6" />
             <path d="M18.5 2.5a2.1 2.1 0 0 1 3 3L12 15l-4 1 1-4z" />
           </svg>
-          LOST &amp; FOUND
+          <span id="stampText">LOST &amp; FOUND</span>
         </span>
-        <h2>어렴풋한 기억을 적어주세요</h2>
+        <h2 id="formHeading">어렴풋한 기억을 적어주세요</h2>
         <fieldset class="type-filter" id="typeFilter">
           <legend>상영관</legend>
           <button type="button" data-type="" aria-pressed="true">전체</button>
@@ -1015,12 +1145,8 @@
             aria-label="찾고 싶은 작품에 대한 설명"
           ></textarea>
         </div>
-        <div class="hint-chips" id="hintChips">
-          <button type="button" data-q="소년이 고양이 버스를 타고 숲의 정령을 만나는 애니메이션">고양이 버스 애니</button>
-          <button type="button" data-q="빚진 사람들이 거액의 상금을 걸고 어린 시절 놀이로 목숨을 건 게임을 하는 드라마">목숨 건 어린이 게임</button>
-          <button type="button" data-q="화성에 혼자 남겨진 우주비행사가 감자를 키우며 버티는 이야기">화성에서 감자 농사</button>
-          <button type="button" data-q="무인도에 표류한 소년이 호랑이와 구명보트에서 함께 지내는 소설">호랑이와 구명보트</button>
-        </div>
+        <!-- 예시 칩은 창구(MODES)에 따라 스크립트가 채운다 -->
+        <div class="hint-chips" id="hintChips"></div>
       </div>
       <div class="search-ticket__stub">
         <div>
@@ -1052,8 +1178,46 @@
       <p>지금은 최신작 검색을 쓸 수 없어서(검색 한도 초과 등), 검색 없이 AI가 알고 있는 작품 중에서 찾았어요. 최근 작품이라면 잠시 후나 내일 다시 찾아 주세요.</p>
     </div>
 
+    <!-- 추천 결과: 상영 시간표 -->
+    <section class="result" id="recoResult" data-mode="recommend" aria-live="polite" hidden>
+      <div class="export-area" id="recoExport">
+        <article class="photocard schedule">
+          <div class="photocard__frame">
+            <header class="schedule__head">
+              <span class="schedule__kicker">NOW SHOWING · TODAY'S PICKS</span>
+              <h3 class="schedule__title">오늘의 추천 상영표</h3>
+            </header>
+            <div class="card-body">
+              <span class="section-label">YOUR TASTE · 취향 분석</span>
+              <p class="one-liner" id="tasteSummary"></p>
+            </div>
+            <ol class="showtimes" id="showtimes"></ol>
+
+            <div class="tear" aria-hidden="true"></div>
+
+            <div class="stub">
+              <div class="card-footer">
+                <div class="card-footer__info">
+                  <div>TICKET <b id="recoTicketNo">No. 000000</b></div>
+                  <div>DATE <b id="recoDate">2026.01.01</b></div>
+                  <div>SHOWS <b id="recoCount">5</b></div>
+                </div>
+                <div class="admit-stamp" aria-hidden="true">PICKED<small>추천 완료</small></div>
+                <div class="barcode" id="recoBarcode" aria-hidden="true"></div>
+              </div>
+            </div>
+          </div>
+        </article>
+      </div>
+
+      <div class="result-actions">
+        <button type="button" class="btn btn--primary" id="recoSaveBtn">PNG로 저장하기</button>
+        <button type="button" class="btn btn--ghost" id="recoAgainBtn">다른 추천 받기</button>
+      </div>
+    </section>
+
     <!-- 결과 -->
-    <section class="result" id="result" aria-live="polite">
+    <section class="result" id="result" data-mode="search" aria-live="polite">
       <div class="export-area" id="exportArea">
         <article class="photocard">
           <div class="photocard__frame">
@@ -1123,14 +1287,53 @@
     };
     const MEDIA_SHORT = { movie: "영화", drama: "드라마", animation: "애니", book: "도서" };
 
-    const LOADING_MESSAGES = [
-      "필름 감는 중...",
-      "영사기 예열 중...",
-      "기억의 조각을 맞추는 중...",
-      "팝콘 튀기는 중...",
-      "비디오 대여점 뒤지는 중...",
-      "곧 상영합니다...",
-    ];
+    // 창구별 문구·예시·API (폼은 하나를 같이 쓰고 내용만 바꾼다)
+    const MODES = {
+      search: {
+        endpoint: "/api/search",
+        stamp: "LOST & FOUND",
+        heading: "어렴풋한 기억을 적어주세요",
+        placeholder: "예) 주인공이 매일 같은 하루를 반복하는데, 결국 사랑을 깨닫는 영화였던 것 같아요",
+        inputLabel: "찾고 싶은 작품에 대한 설명",
+        tooShort: "기억나는 내용을 조금만 더 적어주세요. (2자 이상)",
+        chips: [
+          ["고양이 버스 애니", "소년이 고양이 버스를 타고 숲의 정령을 만나는 애니메이션"],
+          ["목숨 건 어린이 게임", "빚진 사람들이 거액의 상금을 걸고 어린 시절 놀이로 목숨을 건 게임을 하는 드라마"],
+          ["화성에서 감자 농사", "화성에 혼자 남겨진 우주비행사가 감자를 키우며 버티는 이야기"],
+          ["호랑이와 구명보트", "무인도에 표류한 소년이 호랑이와 구명보트에서 함께 지내는 소설"],
+        ],
+        loading: [
+          "필름 감는 중...",
+          "영사기 예열 중...",
+          "기억의 조각을 맞추는 중...",
+          "팝콘 튀기는 중...",
+          "비디오 대여점 뒤지는 중...",
+          "곧 상영합니다...",
+        ],
+      },
+      recommend: {
+        endpoint: "/api/recommend",
+        stamp: "PICK FOR YOU",
+        heading: "좋아하는 작품과 취향을 적어주세요",
+        placeholder: "예) 기생충이랑 올드보이처럼 반전 있는 스릴러가 좋아요. 너무 잔인한 건 싫어요",
+        inputLabel: "좋아하는 작품과 취향",
+        tooShort: "좋아하는 작품이나 취향을 조금만 더 적어주세요. (2자 이상)",
+        chips: [
+          ["반전 스릴러", "기생충, 올드보이처럼 반전이 있는 스릴러가 좋아요"],
+          ["따뜻한 지브리 감성", "이웃집 토토로, 센과 치히로의 행방불명처럼 따뜻하고 신비로운 분위기를 좋아해요"],
+          ["설레는 로맨스 드라마", "사랑의 불시착, 도깨비 같은 설레는 로맨스 드라마가 좋아요. 너무 슬픈 결말은 싫어요"],
+          ["우주 SF", "인터스텔라, 마션처럼 과학적인 우주 SF를 좋아해요"],
+        ],
+        loading: [
+          "취향을 분석하는 중...",
+          "영사기 예열 중...",
+          "비슷한 필름을 고르는 중...",
+          "팝콘 튀기는 중...",
+          "상영표를 짜는 중...",
+          "곧 상영합니다...",
+        ],
+      },
+    };
 
     // ===================== DOM =====================
     const $ = (id) => document.getElementById(id);
@@ -1146,9 +1349,13 @@
     const typeFilter = $("typeFilter");
     const stubQuota = $("stubQuota");
     const latestToggle = $("latestToggle");
+    const recoResult = $("recoResult");
+    const boothTabs = [...document.querySelectorAll(".booth-tab")];
 
     let loadingTimer = null;
     let lastTitle = "";
+    let mode = "search";
+    const drafts = { search: "", recommend: "" }; // 창구를 옮겨 다녀도 각자 적던 내용을 유지
 
     // ===================== 유틸 =====================
     function el(tag, className, text) {
@@ -1188,15 +1395,18 @@
     // ===================== 상태 전환 =====================
     function setLoading(on) {
       submitBtn.disabled = on;
+      // 요청 중에 창구를 바꾸면 결과가 엉뚱한 창구에 그려지므로 잠근다
+      boothTabs.forEach((t) => { t.disabled = on; });
       input.disabled = on;
       loading.classList.toggle("is-active", on);
       clearInterval(loadingTimer);
       if (on) {
+        const messages = MODES[mode].loading;
         let i = 0;
-        loadingMsg.textContent = LOADING_MESSAGES[0];
+        loadingMsg.textContent = messages[0];
         loadingTimer = setInterval(() => {
-          i = (i + 1) % LOADING_MESSAGES.length;
-          loadingMsg.textContent = LOADING_MESSAGES[i];
+          i = (i + 1) % messages.length;
+          loadingMsg.textContent = messages[i];
         }, 1600);
       }
     }
@@ -1256,12 +1466,12 @@
       latestToggle.setAttribute("aria-checked", String(latestToggle.getAttribute("aria-checked") !== "true"));
     });
 
-    async function search(query, mediaTypes, latest) {
+    async function search(endpoint, query, mediaTypes, latest) {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
       try {
-        const res = await fetch(`${API_BASE}/api/search`, {
+        const res = await fetch(`${API_BASE}${endpoint}`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ query, media_types: mediaTypes, latest }),
@@ -1290,8 +1500,7 @@
     }
 
     // ===================== 렌더링 =====================
-    function renderBarcode(seedText) {
-      const barcode = $("barcode");
+    function renderBarcode(seedText, barcode = $("barcode")) {
       barcode.replaceChildren();
       const rand = seededRandom(hashString(seedText));
       for (let i = 0; i < 28; i++) {
@@ -1312,16 +1521,7 @@
       $("oneLiner").textContent = data.one_liner_summary;
       $("matchReason").textContent = data.match_reason;
 
-      // OTT 태그
-      const ott = $("ottTags");
-      ott.replaceChildren();
-      const platforms = Array.isArray(data.ott_platforms) ? data.ott_platforms : [];
-      if (platforms.length) {
-        platforms.forEach((p) => ott.appendChild(el("span", "ott-tag", `▶ ${p}`)));
-      } else {
-        const msg = type === "book" ? "서점 · 도서관에서 만나요" : "OTT 정보 없음";
-        ott.appendChild(el("span", "ott-tag ott-tag--empty", msg));
-      }
+      renderOttTags($("ottTags"), data.ott_platforms, type);
 
       // 대체 후보
       const list = $("candidates");
@@ -1354,18 +1554,69 @@
       result.scrollIntoView({ behavior: "smooth", block: "start" });
     }
 
+    // OTT 태그 (없으면 안내 문구)
+    function renderOttTags(container, platforms, type) {
+      container.replaceChildren();
+      const list = Array.isArray(platforms) ? platforms : [];
+      if (list.length) {
+        list.forEach((p) => container.appendChild(el("span", "ott-tag", `▶ ${p}`)));
+      } else {
+        const msg = type === "book" ? "서점 · 도서관에서 만나요" : "OTT 정보 없음";
+        container.appendChild(el("span", "ott-tag ott-tag--empty", msg));
+      }
+    }
+
+    // 추천 결과: 상영 시간표
+    function renderRecommend(data) {
+      const picks = Array.isArray(data.recommendations) ? data.recommendations : [];
+      $("tasteSummary").textContent = data.taste_summary || "취향을 분석했어요";
+
+      const list = $("showtimes");
+      list.replaceChildren();
+      if (!picks.length) {
+        list.appendChild(el("li", "candidates-empty", "오늘은 추천할 상영작을 찾지 못했어요. 취향을 조금 더 적어 주세요."));
+      }
+      picks.forEach((p, i) => {
+        const li = el("li", "showtime");
+        const no = el("span", "showtime__no", String(i + 1).padStart(2, "0"));
+        no.appendChild(el("small", null, "SHOW"));
+        li.appendChild(no);
+
+        const body = el("div", "showtime__body");
+        const head = el("div");
+        head.appendChild(el("span", "showtime__title", p.title));
+        const meta = [MEDIA_SHORT[p.media_type] || p.media_type, p.release_year].filter(Boolean).join(" · ");
+        if (meta) head.appendChild(el("span", "showtime__meta", meta));
+        body.appendChild(head);
+        const ott = el("div", "ott-tags");
+        renderOttTags(ott, p.ott_platforms, p.media_type);
+        body.appendChild(ott);
+        if (p.reason) body.appendChild(el("p", "showtime__reason", p.reason));
+        li.appendChild(body);
+        list.appendChild(li);
+      });
+
+      const seed = picks.map((p) => p.title).join("|") || "picks";
+      $("recoTicketNo").textContent = randomTicketNo();
+      $("recoDate").textContent = todayString();
+      $("recoCount").textContent = String(picks.length);
+      renderBarcode(seed, $("recoBarcode"));
+
+      recoResult.classList.add("is-active");
+      recoResult.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+
     // ===================== PNG 저장 =====================
-    async function saveAsPng() {
+    async function saveAsPng(button, area, fileBase) {
       if (typeof html2canvas !== "function") {
         showError("이미지 저장 라이브러리를 불러오지 못했어요. 인터넷 연결을 확인해 주세요.");
         return;
       }
-      const original = saveBtn.textContent;
-      saveBtn.disabled = true;
-      saveBtn.textContent = "인화 중...";
+      const original = button.textContent;
+      button.disabled = true;
+      button.textContent = "인화 중...";
       try {
         await document.fonts.ready;
-        const area = $("exportArea");
         const canvas = await html2canvas(area, {
           scale: 2,
           backgroundColor: getComputedStyle(area).backgroundColor,
@@ -1373,7 +1624,7 @@
           logging: false,
         });
         const link = document.createElement("a");
-        const safeName = lastTitle.replace(/[\\/:*?"<>|]/g, "").trim().slice(0, 50) || "ticket";
+        const safeName = fileBase.replace(/[\\/:*?"<>|]/g, "").trim().slice(0, 50) || "ticket";
         link.download = `${safeName}_ticket.png`;
         link.href = canvas.toDataURL("image/png");
         link.click();
@@ -1381,10 +1632,55 @@
         console.error(err);
         showError("이미지 저장에 실패했어요. 다시 시도해 주세요.");
       } finally {
-        saveBtn.disabled = false;
-        saveBtn.textContent = original;
+        button.disabled = false;
+        button.textContent = original;
       }
     }
+
+    // ===================== 창구 전환 =====================
+    function setMode(next) {
+      if (next === mode && form.dataset.mode) return;
+      drafts[mode] = input.value;
+      mode = next;
+      form.dataset.mode = mode;
+      const m = MODES[mode];
+
+      boothTabs.forEach((t) => t.setAttribute("aria-selected", String(t.dataset.mode === mode)));
+      $("stampText").textContent = m.stamp;
+      $("formHeading").textContent = m.heading;
+      input.placeholder = m.placeholder;
+      input.setAttribute("aria-label", m.inputLabel);
+      input.value = drafts[mode];
+
+      const chips = $("hintChips");
+      chips.replaceChildren(
+        ...m.chips.map(([label, q]) => {
+          const b = el("button", null, label);
+          b.type = "button";
+          b.dataset.q = q;
+          return b;
+        })
+      );
+
+      // 결과는 창구마다 따로 보여 주고, 안내 쪽지는 지운다
+      document.querySelectorAll(".result[data-mode]").forEach((s) => { s.hidden = s.dataset.mode !== mode; });
+      hideError();
+      $("fallbackSlip").classList.remove("is-active");
+    }
+
+    $("boothTabs").addEventListener("click", (e) => {
+      const tab = e.target.closest(".booth-tab");
+      if (tab) setMode(tab.dataset.mode);
+    });
+
+    // 탭 목록 안에서 좌우 화살표로 창구 이동
+    $("boothTabs").addEventListener("keydown", (e) => {
+      if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+      const idx = boothTabs.findIndex((t) => t.dataset.mode === mode);
+      const next = boothTabs[(idx + (e.key === "ArrowRight" ? 1 : -1) + boothTabs.length) % boothTabs.length];
+      setMode(next.dataset.mode);
+      next.focus();
+    });
 
     // ===================== 이벤트 =====================
     form.addEventListener("submit", async (e) => {
@@ -1393,18 +1689,21 @@
       hideError();
 
       if (query.length < 2) {
-        showError("기억나는 내용을 조금만 더 적어주세요. (2자 이상)");
+        showError(MODES[mode].tooShort);
         input.focus();
         return;
       }
 
-      result.classList.remove("is-active");
+      const target = mode === "recommend" ? recoResult : result;
+      target.classList.remove("is-active");
       $("fallbackSlip").classList.remove("is-active");
       setLoading(true);
       try {
-        const data = await search(query, selectedTypes(), latestToggle.getAttribute("aria-checked") === "true");
+        const latest = latestToggle.getAttribute("aria-checked") === "true";
+        const data = await search(MODES[mode].endpoint, query, selectedTypes(), latest);
         $("fallbackSlip").classList.toggle("is-active", Boolean(data.latest_fallback));
-        renderResult(data);
+        if (mode === "recommend") renderRecommend(data);
+        else renderResult(data);
       } catch (err) {
         showError(err.message);
       } finally {
@@ -1429,17 +1728,21 @@
       input.focus();
     });
 
-    saveBtn.addEventListener("click", saveAsPng);
+    saveBtn.addEventListener("click", () => saveAsPng(saveBtn, $("exportArea"), lastTitle));
+    $("recoSaveBtn").addEventListener("click", () => saveAsPng($("recoSaveBtn"), $("recoExport"), "추천_상영표"));
 
-    $("againBtn").addEventListener("click", () => {
-      result.classList.remove("is-active");
+    function startOver(section) {
+      section.classList.remove("is-active");
       $("fallbackSlip").classList.remove("is-active");
       hideError();
       input.value = "";
       window.scrollTo({ top: 0, behavior: "smooth" });
       input.focus();
-    });
+    }
+    $("againBtn").addEventListener("click", () => startOver(result));
+    $("recoAgainBtn").addEventListener("click", () => startOver(recoResult));
 
+    setMode("search");
     $("stubNo").textContent = randomTicketNo();
     refreshQuota();
   </script>

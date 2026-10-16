@@ -14,7 +14,7 @@ import os
 import time
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import List, Literal, Optional
+from typing import List, Literal, Optional, Tuple, Type, TypeVar
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -132,7 +132,7 @@ class SearchRequest(BaseModel):
         max_length=4,
         description="이 종류의 작품만 찾는다. 비어 있으면 모든 종류",
     )
-    latest: bool = Field(False, description="Google 검색으로 최신작·현재 상영작까지 찾는다 (느리고 한도를 더 씀)")
+    latest: bool = Field(False, description="TMDB 목록·Google 검색으로 최신작·현재 상영작까지 찾는다 (느리고 한도를 더 씀)")
 
 
 class Candidate(BaseModel):
@@ -150,6 +150,19 @@ class SearchResponse(BaseModel):
     one_liner_summary: str
     match_reason: str
     candidates: List[Candidate] = Field(default_factory=list)
+
+
+class Recommendation(BaseModel):
+    title: str
+    media_type: MediaType
+    release_year: Optional[int] = None
+    ott_platforms: List[str] = Field(default_factory=list)
+    reason: str = Field(..., description="사용자 취향과 어떤 점이 닮았는지")
+
+
+class RecommendResponse(BaseModel):
+    taste_summary: str = Field(..., description="사용자 취향을 한 문장으로 요약")
+    recommendations: List[Recommendation] = Field(default_factory=list)
 
 
 SYSTEM_PROMPT = """너는 책, 영화, 드라마, 애니메이션에 정통한 미디어 큐레이터다.
@@ -180,12 +193,42 @@ SYSTEM_PROMPT = """너는 책, 영화, 드라마, 애니메이션에 정통한 �
 - OTT 정보는 시기에 따라 바뀔 수 있으므로 확실한 것만 넣어라.
 - 모든 설명 문장은 한국어로 작성하라."""
 
+RECOMMEND_PROMPT = """너는 책, 영화, 드라마, 애니메이션에 정통한 미디어 큐레이터다.
+사용자가 좋아하는 작품과 취향(원하는 분위기, 피하고 싶은 요소 등)을 자유롭게 적으면,
+그 작품들의 공통된 매력(주제, 분위기, 장르, 연출, 이야기 구조 등)을 분석해서
+사용자가 좋아할 만한 다른 작품을 추천하라.
+
+반드시 아래 형식의 JSON 객체 하나만 응답하라. 다른 텍스트는 절대 포함하지 마라.
+{
+  "taste_summary": "사용자 취향을 재치 있게 한 문장으로 요약 (예: 반전과 계급 갈등이 있는 서늘한 한국 스릴러를 즐기는 관객)",
+  "recommendations": [
+    {
+      "title": "추천 작품 제목 (한국어 제목이 있으면 한국어 제목, 괄호 안에 원제)",
+      "media_type": "book | movie | drama | animation 중 하나",
+      "release_year": 정수 또는 null,
+      "ott_platforms": ["한국에서 시청 가능한 것으로 알려진 OTT 플랫폼. 책이거나 모르면 빈 배열"],
+      "reason": "사용자가 좋아한 작품과 어떤 점이 닮았는지 스포일러 없이 구체적으로 1~2문장"
+    }
+  ]
+}
+
+규칙:
+- recommendations에는 5개를 넣고, 가장 추천하는 작품부터 순서대로 정렬하라.
+- 사용자가 이미 좋아한다고 적은 작품은 추천하지 마라.
+- 한 시리즈나 한 감독·작가의 작품에 몰리지 않게 다양하게 골라라.
+- 사용자가 피하고 싶다고 한 요소가 있으면 그런 작품은 빼라.
+- 실제로 존재하는 작품만 제시하고, 확실하지 않은 정보는 지어내지 말고 null 또는 빈 배열로 둬라.
+- OTT 정보는 시기에 따라 바뀔 수 있으므로 확실한 것만 넣어라.
+- 모든 설명 문장은 한국어로 작성하라."""
+
 # 최신작 검색을 켰을 때만 붙이는 규칙 (검색 결과가 입력 토큰으로 들어가고 검색 한도도 쓰므로 필요할 때만)
 GROUNDING_RULE = """- 답하기 전에 반드시 검색 도구로 검색하라. 학습 이후에 나온 최신작·현재 상영작일 수 있으니
-  기억만으로 판단하지 말고, 사용자 설명의 핵심 단서로 검색해 후보를 확인하고 OTT 정보도 검색으로 확인하라."""
+  기억만으로 판단하지 말고, 사용자 설명의 핵심 단서로 검색해 작품을 확인하고 OTT 정보도 검색으로 확인하라."""
+
+T = TypeVar("T", bound=BaseModel)
 
 
-def build_configs(latest: bool) -> List[types.GenerateContentConfig]:
+def build_configs(system_prompt: str, schema: Type[BaseModel], latest: bool) -> List[types.GenerateContentConfig]:
     """시도할 요청 설정 목록 (앞에서부터 시도).
 
     최신작 검색(latest)을 켜면:
@@ -194,12 +237,12 @@ def build_configs(latest: bool) -> List[types.GenerateContentConfig]:
     끄면 3)만 사용한다.
     """
     use_search = latest and SEARCH_GROUNDING
-    prompt = f"{SYSTEM_PROMPT}\n{GROUNDING_RULE}" if use_search else SYSTEM_PROMPT
+    prompt = f"{system_prompt}\n{GROUNDING_RULE}" if use_search else system_prompt
     # 오늘 날짜를 알려줘야 '최근', '올해' 같은 표현을 제대로 해석한다
     system = f"{prompt}\n\n오늘 날짜: {datetime.now(KST).date().isoformat()}"
-    schema = dict(response_mime_type="application/json", response_schema=SearchResponse)
+    json_schema = dict(response_mime_type="application/json", response_schema=schema)
     search = dict(tools=[types.Tool(google_search=types.GoogleSearch())])
-    variants = [{**search, **schema}, search, schema] if use_search else [schema]
+    variants = [{**search, **json_schema}, search, json_schema] if use_search else [json_schema]
     return [types.GenerateContentConfig(system_instruction=system, temperature=0.3, **v) for v in variants]
 
 
@@ -218,12 +261,12 @@ def describe_config(config: types.GenerateContentConfig) -> str:
     return f"{tool}, {'JSON 강제' if config.response_schema else 'JSON 미강제'}"
 
 
-def parse_response(text: str) -> SearchResponse:
+def parse_response(text: str, schema: Type[T]) -> T:
     """스키마를 강제하지 못한 응답은 ```json 코드 블록이나 앞뒤 문장이 섞여 올 수 있어 JSON 부분만 꺼낸다."""
     start, end = text.find("{"), text.rfind("}")
     if start != -1 and end > start:
         text = text[start : end + 1]
-    return SearchResponse.model_validate_json(text)
+    return schema.model_validate_json(text)
 
 
 @app.get("/", include_in_schema=False)
@@ -253,23 +296,28 @@ async def get_quota() -> QuotaResponse:
 
 MEDIA_TYPE_NAMES = {"book": "책", "movie": "영화", "drama": "드라마", "animation": "애니메이션"}
 
+# 최근 작품 목록을 어떻게 활용할지 (찾기와 추천은 목적이 달라서 안내 문장이 다르다)
+RECENT_USAGE = {
+    "search": "사용자 설명과 맞는 작품이 목록에 있으면 우선 고려하되, 맞는 작품이 없으면 무시하고 원래 알고 있는 작품에서 찾아라.",
+    "recommend": "사용자 취향에 잘 맞는 최신작이 있으면 추천에 포함하되, 억지로 넣지 말고 원래 알고 있는 작품과 함께 골라라.",
+}
 
-def build_contents(request: SearchRequest, recent: List[tmdb.RecentItem]) -> str:
-    """사용자 설명 뒤에 종류 제한 조건과 최근 작품 목록(최신작 검색 시)을 붙인다."""
+
+def build_contents(request: SearchRequest, recent: List[tmdb.RecentItem], mode: Literal["search", "recommend"]) -> str:
+    """사용자 입력 뒤에 종류 제한 조건과 최근 작품 목록(최신작 검색 시)을 붙인다."""
     parts = [request.query]
     types_ = list(dict.fromkeys(request.media_types))  # 중복 제거, 순서 유지
     if types_ and len(types_) < len(MEDIA_TYPE_NAMES):
         names = ", ".join(f"{MEDIA_TYPE_NAMES[t]}({t})" for t in types_)
         parts.append(
-            f"[검색 조건] 최유력 작품과 모든 후보는 반드시 다음 종류 중에서만 골라라: {names}. "
+            f"[검색 조건] 답에 나오는 모든 작품은 반드시 다음 종류 중에서만 골라라: {names}. "
             "media_type도 이 값들 중 하나여야 한다."
         )
     if recent:
         parts.append(
             "[참고: 최근 상영·방영 작품 목록 (TMDB 기준, 제목 | 종류 | 연도 | 줄거리)]\n"
             f"{tmdb.format_items(recent)}\n"
-            "이 목록은 학습 이후에 나온 최신작을 보충하기 위한 참고 자료다. 사용자 설명과 맞는 작품이 "
-            "목록에 있으면 우선 고려하되, 맞는 작품이 없으면 무시하고 원래 알고 있는 작품에서 찾아라."
+            f"이 목록은 학습 이후에 나온 최신작을 보충하기 위한 참고 자료다. {RECENT_USAGE[mode]}"
         )
     return "\n\n".join(parts)
 
@@ -284,35 +332,30 @@ async def recent_items_for(request: SearchRequest) -> List[tmdb.RecentItem]:
     return items
 
 
-class SearchResult(SearchResponse):
-    """API 응답. SearchResponse는 Gemini에 넘기는 스키마이기도 해서, 서버가 채우는 값은 여기에 둔다."""
-
-    latest_fallback: bool = False  # 최신작 검색을 요청했지만 Google 검색도 TMDB 목록도 없이 답함
-
-
-@app.post("/api/search", response_model=SearchResult)
-async def search_media(request: SearchRequest) -> SearchResult:
+def start_request() -> None:
+    """API 키 확인과 하루 검색 횟수 차감 (찾기·추천 공통)."""
     if not (os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")):
         raise HTTPException(status_code=500, detail="GEMINI_API_KEY 환경변수가 설정되지 않았습니다.")
-
     if not consume_daily_quota():
         raise HTTPException(
             status_code=429,
             detail=f"오늘 준비된 티켓({DAILY_SEARCH_LIMIT}장)이 모두 매진됐어요. 내일 다시 찾아 주세요!",
         )
 
-    recent = await recent_items_for(request)
-    contents = build_contents(request, recent)
+
+async def generate(
+    contents: str, system_prompt: str, schema: Type[T], latest: bool, recent: List[tmdb.RecentItem]
+) -> Tuple[T, bool]:
+    """모델·설정을 바꿔 가며 Gemini를 호출한다. (결과, 최신작 검색을 못 하고 답했는지)를 돌려준다."""
+    global _grounding_blocked_until
     models = [GEMINI_MODEL] + [m for m in GEMINI_FALLBACK_MODELS if m != GEMINI_MODEL]
     last_error: Optional[errors.APIError] = None
-
-    global _grounding_blocked_until
-    use_search = request.latest and time.monotonic() >= _grounding_blocked_until
+    use_search = latest and time.monotonic() >= _grounding_blocked_until
     if recent:
         logger.info("TMDB 최근 작품 %d개를 참고 자료로 보냅니다.", len(recent))
 
     for model in models:
-        configs = build_configs(use_search)
+        configs = build_configs(system_prompt, schema, use_search)
         i = 0
         while i < len(configs):
             config = configs[i]
@@ -331,7 +374,7 @@ async def search_media(request: SearchRequest) -> SearchResult:
                     logger.warning("Gemini 모델 %s 검색 한도 초과로 보고 검색 없이 재시도합니다: %s", model, e.message)
                     use_search = False
                     _grounding_blocked_until = time.monotonic() + GROUNDING_COOLDOWN_SECONDS
-                    configs, i = build_configs(False), 0
+                    configs, i = build_configs(system_prompt, schema, False), 0
                     continue
                 if e.code in RETRYABLE_STATUS_CODES:
                     # 어떤 한도(분당/일일, 검색 그라운딩 등)에 걸렸는지 알 수 있게 Google의 메시지도 남긴다
@@ -345,13 +388,11 @@ async def search_media(request: SearchRequest) -> SearchResult:
 
             try:
                 log_grounding(model, config, response)
-                result = parse_response(response.text or "")
+                result = parse_response(response.text or "", schema)
             except ValidationError as e:
                 raise HTTPException(status_code=502, detail="AI 응답을 해석하지 못했습니다. 다시 시도해 주세요.") from e
-            # 최신작 검색을 요청했지만 검색 없이 답한 경우 화면에 알린다
-            return SearchResult(
-                **result.model_dump(), latest_fallback=request.latest and not config.tools and not recent
-            )
+            # 최신작 검색을 요청했지만 Google 검색도 TMDB 목록도 없이 답한 경우 화면에 알린다
+            return result, latest and not config.tools and not recent
 
     # 모든 모델이 일시 오류로 실패한 경우
     if last_error is not None and last_error.code == 429:
@@ -361,6 +402,36 @@ async def search_media(request: SearchRequest) -> SearchResult:
     raise HTTPException(
         status_code=503, detail="Gemini 서버가 일시적으로 혼잡합니다. 잠시 후 다시 시도해 주세요."
     ) from last_error
+
+
+class SearchResult(SearchResponse):
+    """API 응답. SearchResponse는 Gemini에 넘기는 스키마이기도 해서, 서버가 채우는 값은 여기에 둔다."""
+
+    latest_fallback: bool = False  # 최신작 검색을 요청했지만 Google 검색도 TMDB 목록도 없이 답함
+
+
+class RecommendResult(RecommendResponse):
+    latest_fallback: bool = False
+
+
+@app.post("/api/search", response_model=SearchResult)
+async def search_media(request: SearchRequest) -> SearchResult:
+    start_request()
+    recent = await recent_items_for(request)
+    contents = build_contents(request, recent, "search")
+    result, fallback = await generate(contents, SYSTEM_PROMPT, SearchResponse, request.latest, recent)
+    return SearchResult(**result.model_dump(), latest_fallback=fallback)
+
+
+@app.post("/api/recommend", response_model=RecommendResult)
+async def recommend_media(request: SearchRequest) -> RecommendResult:
+    """좋아하는 작품·취향(자유 입력)으로 비슷한 작품 5개를 추천한다. 하루 검색 횟수는 찾기와 함께 쓴다."""
+    start_request()
+    recent = await recent_items_for(request)
+    contents = build_contents(request, recent, "recommend")
+    result, fallback = await generate(contents, RECOMMEND_PROMPT, RecommendResponse, request.latest, recent)
+    return RecommendResult(**result.model_dump(), latest_fallback=fallback)
+
 
 if __name__ == "__main__":
     import uvicorn
