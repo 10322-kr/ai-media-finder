@@ -261,7 +261,8 @@ async def search_media(request: SearchRequest) -> SearchResponse:
                     logger.warning("Gemini 모델 %s가 설정 %d을(를) 거부(%s), 다음 방식으로 재시도합니다.", model, i, e)
                     continue
                 if e.code in RETRYABLE_STATUS_CODES:
-                    logger.warning("Gemini 모델 %s 일시 오류(%s), 다음 모델로 재시도합니다.", model, e.code)
+                    # 어떤 한도(분당/일일, 검색 그라운딩 등)에 걸렸는지 알 수 있게 Google의 메시지도 남긴다
+                    logger.warning("Gemini 모델 %s 일시 오류(%s), 다음 모델로 재시도합니다: %s", model, e.code, e.message)
                     last_error = e
                     break
                 raise HTTPException(status_code=502, detail=f"Gemini API 호출 실패: {e}") from e
