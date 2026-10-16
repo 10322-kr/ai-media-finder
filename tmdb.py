@@ -10,6 +10,7 @@ import asyncio
 import logging
 import os
 import time
+from datetime import date, timedelta
 from typing import Dict, List, Optional, Tuple
 
 import httpx
@@ -26,13 +27,29 @@ REQUEST_TIMEOUT = 8.0
 OVERVIEW_CHARS = 160  # 줄거리를 잘라 Gemini 입력 토큰을 아낀다
 ANIMATION_GENRE_ID = 16  # TMDB 장르 '애니메이션' (영화·TV 공통)
 
-# (경로, TMDB 종류, 추가 파라미터)
-ENDPOINTS: List[Tuple[str, str, Dict[str, str]]] = [
-    ("/movie/now_playing", "movie", {"region": "KR"}),  # 한국 극장 현재 상영작
-    ("/trending/movie/week", "movie", {}),
-    ("/trending/tv/week", "tv", {}),
-    ("/tv/on_the_air", "tv", {}),  # 최근 방영 중인 시리즈
-]
+KOREAN_TV_PAGES = 2  # 한 페이지 20개
+
+
+def endpoints() -> List[Tuple[str, str, Dict[str, str]]]:
+    """(경로, TMDB 종류, 추가 파라미터). 한국 작품을 앞에 둔다.
+
+    trending/tv, tv/on_the_air는 지역을 지정할 수 없어 해외 드라마 위주라,
+    한국 드라마는 discover로 '최근 2주~앞으로 1주 사이에 에피소드가 방영된 작품'을 따로 받는다.
+    """
+    today = date.today()
+    korean_tv = {
+        "with_origin_country": "KR",
+        "air_date.gte": (today - timedelta(days=14)).isoformat(),
+        "air_date.lte": (today + timedelta(days=7)).isoformat(),
+        "sort_by": "popularity.desc",
+    }
+    return [
+        ("/movie/now_playing", "movie", {"region": "KR"}),  # 한국 극장 현재 상영작
+        *(("/discover/tv", "tv", {**korean_tv, "page": str(p)}) for p in range(1, KOREAN_TV_PAGES + 1)),
+        ("/trending/movie/week", "movie", {}),
+        ("/trending/tv/week", "tv", {}),
+        ("/tv/on_the_air", "tv", {}),
+    ]
 
 
 class RecentItem(BaseModel):
@@ -90,6 +107,7 @@ def _to_item(raw: dict, kind: str) -> Optional[RecentItem]:
 
 async def _fetch_all() -> List[RecentItem]:
     headers, auth_params = _auth()
+    targets = endpoints()
     async with httpx.AsyncClient(base_url=API_BASE, headers=headers, timeout=REQUEST_TIMEOUT) as client:
 
         async def fetch(path: str, params: Dict[str, str]) -> List[dict]:
@@ -98,15 +116,17 @@ async def _fetch_all() -> List[RecentItem]:
             return res.json().get("results", [])
 
         results = await asyncio.gather(
-            *(fetch(path, params) for path, _, params in ENDPOINTS), return_exceptions=True
+            *(fetch(path, params) for path, _, params in targets), return_exceptions=True
         )
 
     items: List[RecentItem] = []
     seen = set()
-    for (path, kind, _), result in zip(ENDPOINTS, results):
+    counts = []
+    for (path, kind, _), result in zip(targets, results):
         if isinstance(result, BaseException):
             logger.warning("TMDB %s 조회 실패: %s", path, _describe_error(result))
             continue
+        counts.append(f"{path} {len(result)}")
         for raw in result:
             key = (kind, raw.get("id"))
             if key in seen:
@@ -115,6 +135,7 @@ async def _fetch_all() -> List[RecentItem]:
             item = _to_item(raw, kind)
             if item:
                 items.append(item)
+    logger.info("TMDB 목록별 개수 (중복 포함): %s", ", ".join(counts) or "없음")
     return items
 
 
